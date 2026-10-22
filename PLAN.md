@@ -4,7 +4,8 @@ A local-first PWA for tracking folk tunes: what I can play, what I want to learn
 heard or recorded them. Part todo list, part spaced-repetition deck, part file store, part music
 player.
 
-> Status: M0 (spikes) and M1 (skeleton and core list) are built; M1 is not deployed yet. Sections
+> Status: M0 (spikes), M1 (skeleton and core list), M2 (sync) and M3 (thesession.org) are built;
+> nothing is deployed yet. Sections
 > marked **(decision)** are proposals to confirm; see
 > [Decisions and open questions](#14-decisions-and-open-questions) at the end.
 
@@ -80,7 +81,7 @@ Three separate kinds of local data, on purpose:
 | App framework | SvelteKit 3 + `adapter-static` (SPA fallback, `ssr = false`) | Gives routing and builds to plain static files. Kit 3 has no `svelte.config.js`: its config is passed to `sveltekit({...})` in `vite.config.ts`. `$lib` is now `#lib` (package.json subpath imports). |
 | PWA | SvelteKit's native service worker (`src/service-worker/`) + a static `manifest.webmanifest` | Precached app shell and WASM. Prompt "Update available — reload" rather than a silent reload mid-practice. `@vite-pwa/sveltekit` was rejected: its peer deps only allow Kit 1–2. |
 | User state | **Automerge** 3 + `@automerge/automerge-repo` **~2.5.x** | See §4. Needs `vite-plugin-wasm` and `build.target: 'esnext'` (for top-level await). The repo packages are pinned to 2.5.x because npm's `latest` tag points at a 2.6 alpha. |
-| Local storage | `automerge-repo-storage-indexeddb`, OPFS for audio, `idb-keyval` for caches | |
+| Local storage | `automerge-repo-storage-indexeddb`, OPFS for audio, a tiny IndexedDB wrapper for caches (`integrations/cache.ts`) | |
 | Styling | Plain CSS with custom properties, or Tailwind | No component library. Mobile-first. |
 | Audio UI | `<audio>` + wavesurfer.js (regions plugin) for trimming | YouTube uses the IFrame Player API behind the same player interface. |
 | Search | In-memory, MiniSearch or plain filtering | A few thousand pieces at most. |
@@ -658,12 +659,31 @@ M2 notes:
   `npm run test:e2e`, `build/` points at the local relay, so rebuild before deploying.
 
 **M3: thesession.org**
-- [ ] Title search → autofill (title, type tag, external ID, thesession source link, and key +
+- [x] Title search → autofill (title, type tag, external ID, thesession source link, and key +
       first notes from the chosen setting)
-- [ ] Integration cache with TTL; aliases included in search
-- [ ] Detail view: "Appears in sets", settings/keys, recordings count
-- [ ] Promote a suggested set into Set piece + links
-- [ ] Duplicate-tuneId detection banner → merge flow (requires M5 merge op, or build it here)
+- [x] Integration cache with TTL; aliases included in search
+- [x] Detail view: "Appears in sets", settings/keys, recordings count
+- [x] Promote a suggested set into Set piece + links
+- [x] Duplicate-tuneId detection banner → merge flow (the merge op is built here; M5 adds the
+      manual "Merge with…" picker)
+
+M3 notes:
+- Domain: `domain/thesession.ts` (`linkTheSessionTune`, `applyTheSessionSetting`,
+  `unlinkTheSession`, `promoteTheSessionSet`, `typeTag`, `piecesWithTune`), `domain/relations.ts`
+  (`linkPieces`, `unlinkPieces`, `mergePieces`, `resolvePiece`) and `domain/order.ts`
+  (`fractional-indexing` keys). The index gained `children`, `parents`, `resolve`, `withTune` and
+  `duplicateTunes`; `listPieces` takes an `aliases` map. All ops are tested on plain objects and
+  Automerge docs, with concurrent merge/link cases.
+- Integration cache: `integrations/cache.ts` (a tiny IndexedDB key-value store, `SwrCache`, and
+  `throttledFetch`), `integrations/thesession-cache.ts` (TTLs and keys), and
+  `store/thesession.svelte.ts` (shared reactive `Resource`s, the alias map, "Clear cached data").
+- UI: the 🔍 panel in the edit modal (`TheSessionSearch.svelte`), "Linked to … / Unlink" in the
+  edit modal, `TheSessionInfo.svelte` and a read-only Related section in the detail view, the
+  duplicate banner in the list, and `MergeDialog.svelte`.
+- E2E (`e2e/thesession.test.ts`) serves the recorded fixtures through `page.route`
+  (`e2e/thesession.ts`), so no test reaches thesession.org. It covers search → setting → fields,
+  duplicate → merge (and the merged piece's URL redirecting), the banner and merge dialog, set
+  promotion, alias search across a reload, and offline display from the cache plus clearing it.
 
 **M4: Recordings and player**
 - [ ] Source/Clip model, recordings section, provider decorations, empty-state import panel
@@ -681,7 +701,8 @@ M2 notes:
       shuffle. Show "via <Set>" entries in the detail view.
 - [ ] Part → Tune inheritance of skill and key, with muted "from <Tune>" display
 - [ ] Split from a clip region → new child piece on the same source
-- [ ] Merge (manual + thesession-prompted), `mergedInto` redirects
+- [ ] Merge: manual "Merge with…" picker. (The merge op, the thesession-prompted flow and
+      `mergedInto` redirects were built in M3.)
 
 **M6: Shuffle**
 - [ ] Full-screen shuffle view, Practiced/Skip (Skip persists nothing), inline skill slider
@@ -823,6 +844,54 @@ M2 notes:
   drop in-flight writes, the changes since the last confirmed save are also kept in
   `localStorage` until the flush completes, and replayed on the next load. Chromium didn't need
   this net in testing.
+
+**Decided during M3 (2026-10-22)**
+
+- **The cache stores parsed responses**, under keys like `thesession:tune:1`, in a separate
+  IndexedDB database (`tunejournal-cache`), with a `CACHE_VERSION` that invalidates old shapes.
+  TTLs: tune, sets and recordings 7 days; search 1 hour. Every read is stale-while-revalidate:
+  cached data shows at once (offline too), and a stale entry is refreshed in the background only
+  when `navigator.onLine`. A failed refresh keeps the old data. Requests to thesession.org go out
+  one at a time, at least 300 ms apart, and the search box waits 400 ms after typing. The cache is
+  hand-rolled (about 40 lines) rather than `idb-keyval`, so it can also list and count keys for
+  Settings → "Clear cached data".
+- **Alias search** uses only tunes already in the cache. The list doesn't fetch thesession data for
+  every linked tune on load; picking a tune or opening its detail view caches it. Matching is per
+  name: every query word must appear in the title, or all of them in one alias (or the thesession
+  name).
+- **Autofill order:** picking a result asks before replacing a non-blank title that differs
+  (ignoring case and punctuation). It then links the tune (tune id, type tag in the library's
+  casing, link-only Source + Clip). If the tune is already on another live piece, it offers *Open
+  existing*, *Merge into existing* or *Keep both* before the setting picker. *Open existing*
+  discards the new piece if it holds nothing but the search. A tune with one setting fills only
+  blank key and first notes; picking one of several overwrites them. First notes are
+  `firstBars(abc, 2)`.
+- **thesession links are clips with deterministic ids:** Source and Clip id
+  `thesession:tune:{id}` (or `thesession:set:{id}`), so the same tune added on two devices, or two
+  merged pieces, share one. The Source holds only the URL and id, not the tune name (§13).
+  Relinking a piece to another tune drops the old link and setting id. The edit modal shows the ids
+  read-only with *Unlink*.
+- **Merge details:** losers are merged in one op, and ids resolve through earlier merges first.
+  Title, kind, description, key and first notes come from the survivor, or from the first loser
+  that has one where the survivor is blank (kind always from the survivor), unless the dialog's
+  field picker says otherwise. The picker only lists fields where the pieces differ. External ids
+  fill gaps on the survivor. Clips are copied after the survivor's (skipping the same source and
+  trim). Practice entries are inserted in time order. Links are re-pointed; one that would join the
+  survivor to itself is dropped, and one that already exists keeps its position. The same merge
+  done on two devices at once copies the practice log twice, so the index dedupes identical entries
+  (same time, via and skill). `resolvePiece` follows `mergedInto` chains and stops at cycles;
+  `/piece/[id]` of a merged piece redirects with `replaceState`. There's no undo for a merge yet.
+- **Duplicate banner:** shown for the oldest group of live pieces sharing a tune id, with a count of
+  any other groups. Dismissing it hides it until the set of duplicates changes (not persisted).
+  "Review" opens the merge dialog with the oldest piece preselected as the survivor.
+- **Promoting a set** creates a Set titled with its tune names joined by " / " (thesession's own
+  set names can be long, odd lists), with `external.thesession.setId` and a set link. Tunes match
+  existing live pieces by tune id (oldest first); missing ones become Tunes with title, type tag,
+  setting id, key (from the set's abbreviated key) and link, but no first notes, since sets carry no
+  ABC. Promoting the same set again reuses it. Children are ordered with `fractional-indexing` keys,
+  ties broken by link id. The detail view lists up to 10 sets (the first API page).
+- **Related (read-only)** in the detail view lists "Part of" (parents, by title) and "Contains"
+  (children, in order). Links to a merged piece follow the redirect. Editing comes in M5.
 
 **Still open**
 

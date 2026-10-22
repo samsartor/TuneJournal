@@ -1,12 +1,16 @@
 <script lang="ts">
+	import { goto } from '$app/navigation';
+	import { resolve } from '$app/paths';
 	import { hasKey } from '#lib/domain/derived.ts';
 	import { KINDS, KIND_LABEL } from '#lib/domain/format.ts';
 	import { addTag, removeTag, updatePiece, type PiecePatch } from '#lib/domain/ops.ts';
-	import type { PieceKind } from '#lib/domain/types.ts';
+	import { tuneUrl, unlinkTheSession } from '#lib/domain/thesession.ts';
+	import type { PieceId, PieceKind } from '#lib/domain/types.ts';
 	import { library } from '#lib/store/library.svelte.ts';
 	import KeyInput from './KeyInput.svelte';
 	import SkillSlider from './SkillSlider.svelte';
 	import TagInput from './TagInput.svelte';
+	import TheSessionSearch from './TheSessionSearch.svelte';
 	import { ui } from './state.svelte.ts';
 
 	const TEXT_DELAY = 400;
@@ -23,18 +27,39 @@
 	let firstNotes = $state('');
 	let pending: PiecePatch = {};
 	let timer: ReturnType<typeof setTimeout> | undefined;
+	let searching = $state(false);
+
+	const thesession = $derived(piece?.external?.thesession);
+
+	/** Re-reads the text fields from the doc, after something other than typing changed them. */
+	function syncText() {
+		const p = editing ? library.doc?.pieces[editing.id] : undefined;
+		title = p?.title ?? '';
+		description = p?.description ?? '';
+		firstNotes = p?.firstNotes ?? '';
+	}
 
 	$effect(() => {
 		if (editing && !dialog.open) {
-			const p = library.doc?.pieces[editing.id];
-			title = p?.title ?? '';
-			description = p?.description ?? '';
-			firstNotes = p?.firstNotes ?? '';
+			syncText();
+			searching = false;
 			dialog.showModal();
 		} else if (!editing && dialog.open) {
 			dialog.close();
 		}
 	});
+
+	/** Leaves the modal for another piece (an existing copy of the tune just searched for). */
+	async function leaveTo(id: PieceId) {
+		searching = false;
+		dialog.close();
+		await goto(resolve('/(main)/piece/[id]', { id }));
+	}
+
+	function unlink() {
+		const id = editing?.id;
+		if (id) library.change((d) => unlinkTheSession(d, id));
+	}
 
 	function save(patch: PiecePatch) {
 		const id = editing?.id;
@@ -90,17 +115,44 @@
 
 				<div class="field">
 					<label for="edit-title">Title</label>
-					<!-- svelte-ignore a11y_autofocus -->
-					<input
-						id="edit-title"
-						type="text"
-						autocomplete="off"
-						autofocus={editing.isNew}
-						bind:value={title}
-						oninput={() => queue({ title })}
-						onkeydown={(e) => e.key === 'Enter' && flush()}
-					/>
+					<div class="title-row">
+						<!-- svelte-ignore a11y_autofocus -->
+						<input
+							id="edit-title"
+							type="text"
+							autocomplete="off"
+							autofocus={editing.isNew}
+							bind:value={title}
+							oninput={() => queue({ title })}
+							onkeydown={(e) => e.key === 'Enter' && flush()}
+						/>
+						<button
+							type="button"
+							class="btn-quiet search-btn"
+							aria-label="Search thesession.org"
+							title="Search thesession.org"
+							aria-expanded={searching}
+							onclick={() => {
+								flush();
+								searching = !searching;
+							}}>🔍</button
+						>
+					</div>
 				</div>
+
+				{#if searching}
+					{#key editing.id}
+						<TheSessionSearch
+							pieceId={editing.id}
+							initialQuery={title}
+							isNew={editing.isNew}
+							beforeApply={flush}
+							onapplied={syncText}
+							onclose={() => (searching = false)}
+							onleave={leaveTo}
+						/>
+					{/key}
+				{/if}
 
 				<div class="field">
 					<label for="edit-description">Description</label>
@@ -146,6 +198,25 @@
 							bind:value={firstNotes}
 							oninput={() => queue({ firstNotes })}
 						/>
+					</div>
+				{/if}
+
+				{#if thesession}
+					<div class="field">
+						<span class="label" id="edit-external">Linked to</span>
+						<div class="external" aria-labelledby="edit-external" role="group">
+							{#if thesession.tuneId !== undefined}
+								<!-- eslint-disable-next-line svelte/no-navigation-without-resolve -->
+								<a href={tuneUrl(thesession.tuneId)} target="_blank" rel="noopener noreferrer"
+									>thesession.org tune {thesession.tuneId}{thesession.settingId !== undefined
+										? `, setting ${thesession.settingId}`
+										: ''} ↗</a
+								>
+							{:else if thesession.setId !== undefined}
+								<span>thesession.org set {thesession.setId}</span>
+							{/if}
+							<button type="button" class="btn-quiet" onclick={unlink}>Unlink</button>
+						</div>
 					</div>
 				{/if}
 			</div>
@@ -208,8 +279,32 @@
 		gap: var(--space-1);
 	}
 
-	.field > label {
+	.field > label,
+	.label {
 		font-weight: 600;
+	}
+
+	.title-row {
+		display: flex;
+		gap: var(--space-2);
+	}
+
+	.title-row input {
+		flex: 1;
+		min-width: 0;
+	}
+
+	.search-btn {
+		min-width: var(--touch);
+		padding: 0;
+	}
+
+	.external {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		justify-content: space-between;
+		gap: var(--space-2);
 	}
 
 	.check {

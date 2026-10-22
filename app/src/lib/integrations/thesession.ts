@@ -26,8 +26,13 @@ export interface TuneSummary {
 	date: string;
 }
 
+export interface SearchHit extends TuneSummary {
+	/** The alias the query matched, when it matched one rather than the name. */
+	alias?: string;
+}
+
 export interface SearchResults extends Page {
-	tunes: TuneSummary[];
+	tunes: SearchHit[];
 }
 
 export interface TuneSetting {
@@ -159,7 +164,15 @@ function tuneSummary(v: unknown): TuneSummary {
 
 export function parseSearch(json: unknown): SearchResults {
 	const j = obj(json, 'search');
-	return { ...page(j), tunes: arr(j.tunes, 'tunes').map(tuneSummary) };
+	return {
+		...page(j),
+		tunes: arr(j.tunes, 'tunes').map((v) => {
+			const hit: SearchHit = tuneSummary(v);
+			const alias = (v as Json).alias;
+			if (typeof alias === 'string' && alias) hit.alias = alias;
+			return hit;
+		})
+	};
 }
 
 export function parseTune(json: unknown): Tune {

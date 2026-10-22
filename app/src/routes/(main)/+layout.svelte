@@ -2,6 +2,7 @@
 	import { page } from '$app/state';
 	import EditModal from '#lib/ui/EditModal.svelte';
 	import ListPane from '#lib/ui/ListPane.svelte';
+	import MergeDialog from '#lib/ui/MergeDialog.svelte';
 	import type { LayoutProps } from './$types';
 
 	let { children }: LayoutProps = $props();
@@ -19,6 +20,7 @@
 </div>
 
 <EditModal />
+<MergeDialog />
 
 <style>
 	/* Mobile: one view at a time; the detail route replaces the list. */

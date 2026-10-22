@@ -4,6 +4,7 @@
 	import type { ResolvedPathname } from '$app/types';
 	import { library, type ImportResult } from '#lib/store/library.svelte.ts';
 	import { previousLibraryUrls } from '#lib/store/repo.ts';
+	import { theSession } from '#lib/store/thesession.svelte.ts';
 	import SyncIndicator from '#lib/ui/SyncIndicator.svelte';
 
 	let usage = $state<{ used: number; quota: number }>();
@@ -30,8 +31,26 @@
 		persisted = await storage.persisted?.();
 	}
 
+	let cachedEntries = $state<number>();
+	let clearing = $state(false);
+
+	async function refreshCache() {
+		cachedEntries = await theSession.entryCount().catch(() => undefined);
+	}
+
+	async function clearCache() {
+		clearing = true;
+		try {
+			await theSession.clear();
+		} finally {
+			clearing = false;
+		}
+		await Promise.all([refreshCache(), refreshStorage()]);
+	}
+
 	onMount(() => {
 		refreshStorage();
+		refreshCache();
 	});
 
 	function bytes(n: number) {
@@ -164,6 +183,26 @@
 					: 'Storage isn’t marked persistent yet. The browser may clear it if space runs low, so keep backups.'}
 			</p>
 		{/if}
+	</section>
+
+	<section>
+		<h2>Cached data</h2>
+		<p class="muted small">
+			Tune details, sets and searches from thesession.org are kept on this device so they work
+			offline. They aren’t synced, and they’re fetched again when needed.
+		</p>
+		<p data-testid="cache-count">
+			{#if cachedEntries === undefined}
+				&nbsp;
+			{:else if cachedEntries === 0}
+				Nothing cached.
+			{:else}
+				{cachedEntries} cached {cachedEntries === 1 ? 'response' : 'responses'}.
+			{/if}
+		</p>
+		<button type="button" class="btn-quiet" onclick={clearCache} disabled={clearing}
+			>Clear cached data</button
+		>
 	</section>
 
 	<section>

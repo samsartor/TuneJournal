@@ -2,6 +2,7 @@
 	import { resolve } from '$app/paths';
 	import { listPieces } from '#lib/domain/derived.ts';
 	import { library } from '#lib/store/library.svelte.ts';
+	import { theSession } from '#lib/store/thesession.svelte.ts';
 	import FilterBar from './FilterBar.svelte';
 	import PieceCard from './PieceCard.svelte';
 	import SyncIndicator from './SyncIndicator.svelte';
@@ -10,11 +11,30 @@
 	let { selectedId }: { selectedId?: string } = $props();
 
 	let query = $state('');
+	let dismissedDupes = $state<string>();
 
 	const settings = $derived(library.doc?.settings.list);
+	// thesession names and aliases from the integration cache, so search finds "The Tulla" too.
+	const aliases = $derived(library.index ? theSession.aliasMap(library.index) : undefined);
 	const pieces = $derived(
-		library.index && settings ? listPieces(library.index, { settings, query, now: ui.now }) : []
+		library.index && settings
+			? listPieces(library.index, { settings, query, now: ui.now, aliases })
+			: []
 	);
+	const dupes = $derived(library.index?.duplicateTunes ?? []);
+	// Dismissing hides the banner until the set of duplicates changes.
+	const dupeKey = $derived(dupes.map((g) => g.pieces.map((p) => p.id).join(',')).join(';'));
+
+	$effect(() => {
+		// A throwaway collection, not state.
+		// eslint-disable-next-line svelte/prefer-svelte-reactivity
+		const ids = new Set<number>();
+		for (const p of library.index?.live ?? []) {
+			const tuneId = p.external?.thesession?.tuneId;
+			if (tuneId !== undefined) ids.add(tuneId);
+		}
+		theSession.prime(ids);
+	});
 	const total = $derived(library.index?.live.length ?? 0);
 </script>
 
@@ -31,7 +51,7 @@
 		<input
 			class="search"
 			type="search"
-			placeholder="Search titles"
+			placeholder="Search titles and aliases"
 			aria-label="Search"
 			autocomplete="off"
 			bind:value={query}
@@ -42,6 +62,28 @@
 
 	{#if library.status === 'ready' && settings && library.index}
 		<FilterBar {settings} index={library.index} />
+
+		{#if dupes.length > 0 && dismissedDupes !== dupeKey}
+			{@const group = dupes[0]}
+			<div class="banner" role="status">
+				<span>
+					{group.pieces.length} pieces are the same thesession tune{dupes.length > 1
+						? ` (and ${dupes.length - 1} more ${dupes.length === 2 ? 'tune' : 'tunes'})`
+						: ''}
+				</span>
+				<button
+					type="button"
+					class="btn-quiet"
+					onclick={() => ui.openMerge(group.pieces.map((p) => p.id))}>Review</button
+				>
+				<button
+					type="button"
+					class="icon-btn"
+					aria-label="Dismiss duplicate notice"
+					onclick={() => (dismissedDupes = dupeKey)}>×</button
+				>
+			</div>
+		{/if}
 
 		<p class="count muted" aria-live="polite">
 			{pieces.length === total
@@ -138,6 +180,21 @@
 		padding: 0 var(--space-3);
 		border-radius: var(--radius);
 		text-decoration: none;
+	}
+
+	.banner {
+		display: flex;
+		align-items: center;
+		gap: var(--space-2);
+		padding: var(--space-1) var(--space-1) var(--space-1) var(--space-3);
+		background: var(--color-accent-soft);
+		border: 1px solid var(--color-accent);
+		border-radius: var(--radius);
+	}
+
+	.banner span {
+		flex: 1;
+		min-width: 0;
 	}
 
 	.count {

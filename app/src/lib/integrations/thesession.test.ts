@@ -25,6 +25,7 @@ describe('parsers', () => {
 			type: 'reel',
 			date: '2001-05-14 18:45:18'
 		});
+		expect(r.tunes[1].alias).toBe("Joe Cooley's");
 	});
 
 	it('parses a tune with settings and aliases', () => {

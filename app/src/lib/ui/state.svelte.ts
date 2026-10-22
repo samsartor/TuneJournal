@@ -10,6 +10,7 @@ import {
 	undoDelete,
 	unlogPractice
 } from '#lib/domain/ops.ts';
+import { mergePieces, type MergeOptions } from '#lib/domain/relations.ts';
 import type { PieceId } from '#lib/domain/types.ts';
 import { library } from '#lib/store/library.svelte.ts';
 
@@ -23,6 +24,8 @@ const TOAST_MS = 6000;
 
 class Ui {
 	editing = $state<{ id: PieceId; isNew: boolean }>();
+	/** Pieces in the open merge dialog, oldest first. */
+	merging = $state<PieceId[]>();
 	toast = $state<Toast>();
 	/** Epoch ms, refreshed every 30 s so relative times and date filters stay current. */
 	now = $state(Date.now());
@@ -54,6 +57,24 @@ class Ui {
 
 	closeEdit() {
 		this.editing = undefined;
+	}
+
+	openMerge(ids: PieceId[]) {
+		this.merging = ids;
+	}
+
+	closeMerge() {
+		this.merging = undefined;
+	}
+
+	/** Merges `losers` into `survivor` (§6.4), then shows the survivor. */
+	async merge(survivor: PieceId, losers: PieceId[], fields?: MergeOptions['fields']) {
+		const id = library.change((d) => mergePieces(d, survivor, losers, { fields }));
+		this.closeMerge();
+		this.now = Date.now();
+		const n = losers.length + 1;
+		this.showToast(`Merged ${n} pieces into ${this.#name(id)}`);
+		await goto(resolve('/(main)/piece/[id]', { id }));
 	}
 
 	/** §6.3: create a blank Tune right away, show it, and open Edit on it. */

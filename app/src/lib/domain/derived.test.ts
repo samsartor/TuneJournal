@@ -161,6 +161,23 @@ describe('search', () => {
 		expect(matchesSearch(lib.pieces[id], '  ')).toBe(true);
 		expect(matchesSearch(lib.pieces[id], 'untitled')).toBe(false);
 	});
+
+	it('also matches aliases passed in by the caller, one name at a time', () => {
+		const lib = emptyLibrary();
+		const id = add(lib, 'Cooley’s');
+		const other = add(lib, 'The Kesh');
+		const aliases = new Map([[id, ['The Tulla', 'Joe Cooley’s Fancy']]]);
+		const list = (query: string) =>
+			listPieces(buildIndex(lib), { settings: settings(), query, aliases, now: NOW }).map(
+				(p) => p.id
+			);
+		expect(list('tulla')).toEqual([id]);
+		expect(list('joe fancy')).toEqual([id]);
+		// Words split across two names don't match.
+		expect(list('tulla fancy')).toEqual([]);
+		expect(list('kesh')).toEqual([other]);
+		expect(matchesSearch(lib.pieces[id], 'tulla')).toBe(false);
+	});
 });
 
 describe('filter', () => {

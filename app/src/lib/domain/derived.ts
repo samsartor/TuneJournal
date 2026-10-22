@@ -5,8 +5,10 @@
 // there without touching the callers.
 
 import { tagKey } from './ops.ts';
+import { resolvePiece, sortLinks } from './relations.ts';
 import type {
 	Library,
+	Link,
 	ListSettings,
 	Piece,
 	PieceId,
@@ -42,6 +44,27 @@ export interface LibraryIndex {
 	effectiveKey(piece: Piece): string | undefined;
 	/** The piece's tags, one spelling per tag, sorted. */
 	tagsOf(piece: Piece): string[];
+	/** The piece an id refers to now, following merge redirects. */
+	resolve(id: PieceId): Piece | undefined;
+	/** Live children, in order, each with its link. Links to merged pieces follow the redirect. */
+	children(piece: Piece): Related[];
+	/** Live parents, by title. */
+	parents(piece: Piece): Related[];
+	/** Live pieces linked to a thesession tune, oldest first. */
+	withTune(tuneId: number): Piece[];
+	/** Groups of two or more live pieces that share a thesession tune id, oldest group first. */
+	readonly duplicateTunes: DuplicateGroup[];
+}
+
+export interface Related {
+	piece: Piece;
+	link: Link;
+}
+
+export interface DuplicateGroup {
+	tuneId: number;
+	/** Oldest first. */
+	pieces: Piece[];
 }
 
 export function isLive(piece: Piece): boolean {
@@ -60,7 +83,14 @@ export function buildIndex(library: Library): LibraryIndex {
 
 	const tagCounts = new Map<string, TagUsage>();
 	const keys = new Set<string>();
+	const byTune = new Map<number, Piece[]>();
 	for (const piece of live) {
+		const tuneId = piece.external?.thesession?.tuneId;
+		if (tuneId !== undefined) {
+			const group = byTune.get(tuneId);
+			if (group) group.push(piece);
+			else byTune.set(tuneId, [piece]);
+		}
 		for (const tag of tagsOf(piece)) {
 			const usage = tagCounts.get(tagKey(tag));
 			if (usage) usage.count++;
@@ -69,13 +99,44 @@ export function buildIndex(library: Library): LibraryIndex {
 		if (piece.key && hasKey(piece)) keys.add(piece.key);
 	}
 
+	const byAge = (a: Piece, b: Piece) => a.createdAt - b.createdAt || (a.id < b.id ? -1 : 1);
+	for (const group of byTune.values()) group.sort(byAge);
+	const duplicateTunes = [...byTune]
+		.filter(([, pieces]) => pieces.length > 1)
+		.map(([tuneId, pieces]) => ({ tuneId, pieces }))
+		.sort((a, b) => byAge(a.pieces[0], b.pieces[0]));
+
 	const effectivePractice = (piece: Piece) => {
 		let entries = practiceCache.get(piece.id);
 		if (!entries) {
-			entries = [...piece.practice].sort((a, b) => b.at - a.at);
+			entries = dedupePractice(piece.practice).sort((a, b) => b.at - a.at);
 			practiceCache.set(piece.id, entries);
 		}
 		return entries;
+	};
+
+	// Links grouped by (resolved) end, built on first use.
+	let linksBy: { children: Map<PieceId, Related[]>; parents: Map<PieceId, Related[]> } | undefined;
+	const relations = () => {
+		if (linksBy) return linksBy;
+		const children = new Map<PieceId, Related[]>();
+		const parents = new Map<PieceId, Related[]>();
+		const seen = new Set<string>();
+		for (const link of sortLinks(Object.values(library.links))) {
+			const parent = resolvePiece(library, link.parent);
+			const child = resolvePiece(library, link.child);
+			if (!parent || !child || !isLive(parent) || !isLive(child) || parent === child) continue;
+			const pair = `${parent.id}:${child.id}`;
+			if (seen.has(pair)) continue;
+			seen.add(pair);
+			push(children, parent.id, { piece: child, link });
+			push(parents, child.id, { piece: parent, link });
+		}
+		for (const list of parents.values()) {
+			list.sort((a, b) => compareText(a.piece.title ?? '', b.piece.title ?? ''));
+		}
+		linksBy = { children, parents };
+		return linksBy;
 	};
 
 	return {
@@ -97,8 +158,33 @@ export function buildIndex(library: Library): LibraryIndex {
 		},
 		effectiveSkill: (piece) => piece.skill,
 		effectiveKey: (piece) => (hasKey(piece) ? piece.key : undefined),
-		tagsOf
+		tagsOf,
+		resolve: (id) => resolvePiece(library, id),
+		children: (piece) => relations().children.get(piece.id) ?? [],
+		parents: (piece) => relations().parents.get(piece.id) ?? [],
+		withTune: (tuneId) => byTune.get(tuneId) ?? [],
+		duplicateTunes
 	};
+}
+
+function push<K, V>(map: Map<K, V[]>, key: K, value: V) {
+	const list = map.get(key);
+	if (list) list.push(value);
+	else map.set(key, [value]);
+}
+
+/**
+ * Drops repeated entries (same time, via and skill). Two devices merging the same pieces at once
+ * both copy the loser's log into the survivor, so the doc can hold doubles.
+ */
+function dedupePractice(entries: readonly PracticeEntry[]): PracticeEntry[] {
+	const seen = new Set<string>();
+	return entries.filter((e) => {
+		const key = `${e.at}|${e.via ?? ''}|${e.skillAfter ?? ''}`;
+		if (seen.has(key)) return false;
+		seen.add(key);
+		return true;
+	});
 }
 
 function tagsOf(piece: Piece): string[] {
@@ -138,12 +224,21 @@ export function foldText(text: string): string {
 		.trim();
 }
 
-/** Every word of the query must appear in the title. Thesession aliases join in M3. */
-export function matchesSearch(piece: Piece, query: string): boolean {
+/**
+ * Every word of the query must appear in the title, or all of them in one of the piece's other
+ * names (its thesession aliases, passed in by the caller since they live in the integration cache).
+ */
+export function matchesSearch(
+	piece: Piece,
+	query: string,
+	aliases: readonly string[] = []
+): boolean {
 	const words = foldText(query).split(' ').filter(Boolean);
 	if (words.length === 0) return true;
-	const haystack = foldText(piece.title ?? '');
-	return words.every((w) => haystack.includes(w));
+	return [piece.title ?? '', ...aliases].some((name) => {
+		const haystack = foldText(name);
+		return words.every((w) => haystack.includes(w));
+	});
 }
 
 // Filter
@@ -253,13 +348,18 @@ export interface ListQuery {
 	settings: ListSettings;
 	query?: string;
 	now?: Timestamp;
+	/** Other names to search by, per piece (thesession aliases from the cache). */
+	aliases?: ReadonlyMap<PieceId, readonly string[]>;
 }
 
 /** The main list: live pieces matching the search and filters, sorted. */
-export function listPieces(index: LibraryIndex, { settings, query = '', now }: ListQuery): Piece[] {
+export function listPieces(
+	index: LibraryIndex,
+	{ settings, query = '', now, aliases }: ListQuery
+): Piece[] {
 	const at = now ?? Date.now();
 	const pieces = index.live.filter(
-		(p) => matchesSearch(p, query) && matchesFilter(index, p, settings, at)
+		(p) => matchesSearch(p, query, aliases?.get(p.id)) && matchesFilter(index, p, settings, at)
 	);
 	return sortPieces(index, pieces, settings.sort, settings.descending);
 }
