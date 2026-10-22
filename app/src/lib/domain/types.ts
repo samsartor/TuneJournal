@@ -122,6 +122,8 @@ export interface Settings {
 		/** Inclusive; unrated counts as 1. */
 		skillMin: Skill;
 		skillMax: Skill;
+		/** Also apply the main list's filter (not its search text). Absent = off. */
+		respectListFilter?: boolean;
 	};
 	list: ListSettings;
 }

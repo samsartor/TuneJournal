@@ -11,6 +11,7 @@ import type {
 	PieceId,
 	PieceKind,
 	PracticeEntry,
+	Settings,
 	Skill,
 	Timestamp
 } from './types.ts';
@@ -280,5 +281,34 @@ export function setListSettings(lib: Library, patch: Partial<ListSettings>): voi
 		} else if (list[field] !== value) {
 			(list as unknown as Record<string, unknown>)[field] = value;
 		}
+	}
+}
+
+/**
+ * Merges shuffle settings field by field (kinds key by key), like setListSettings, so concurrent
+ * changes to different fields both survive. `respectListFilter: false` clears the flag.
+ */
+export function setShuffleSettings(lib: Library, patch: Partial<Settings['shuffle']>): void {
+	const shuffle = lib.settings.shuffle;
+	for (const [field, value] of Object.entries(patch) as [keyof Settings['shuffle'], unknown][]) {
+		if (value === undefined) continue;
+		if (field === 'kinds') {
+			for (const [k, v] of Object.entries(value as Record<PieceKind, boolean>)) {
+				if (shuffle.kinds[k as PieceKind] !== v) shuffle.kinds[k as PieceKind] = v;
+			}
+		} else if (field === 'respectListFilter') {
+			if (value) shuffle.respectListFilter = true;
+			else if ('respectListFilter' in shuffle) delete shuffle.respectListFilter;
+		} else if (field === 'skillMin' || field === 'skillMax') {
+			const skill = checkSkill(value as number);
+			if (shuffle[field] !== skill) shuffle[field] = skill;
+		} else if (shuffle[field] !== value) {
+			(shuffle as unknown as Record<string, unknown>)[field] = value;
+		}
+	}
+	// Keep the range the right way round.
+	if (shuffle.skillMin > shuffle.skillMax) {
+		if ('skillMin' in patch) shuffle.skillMax = shuffle.skillMin;
+		else shuffle.skillMin = shuffle.skillMax;
 	}
 }

@@ -4,9 +4,10 @@ A local-first PWA for tracking folk tunes: what I can play, what I want to learn
 heard or recorded them. Part todo list, part spaced-repetition deck, part file store, part music
 player.
 
-> Status: M0 (spikes), M1 (skeleton and core list), M2 (sync), M3 (thesession.org) and M4
-> (recordings and player) are built; nothing is deployed yet. Google Drive is pending a manual
-> test with real credentials. Sections
+> Status: M0–M6 are built (spikes, core list, sync, thesession.org, recordings and player,
+> relations, shuffle); nothing is deployed yet. Only manual tests are pending: Google Drive with
+> real credentials, the Android share sheet and the slow-down listening test
+> (`spikes/README.md`). The M7 backend is deferred until it's needed, and M8 is for later. Sections
 > marked **(decision)** are proposals to confirm; see
 > [Decisions and open questions](#14-decisions-and-open-questions) at the end.
 
@@ -767,12 +768,36 @@ M5 notes:
   bounds 2.00–4.00), plus a blank split; "Merge with…" from a card, then Undo (survives a reload).
 
 **M6: Shuffle**
-- [ ] Full-screen shuffle view, Practiced/Skip (Skip persists nothing), inline skill slider
-- [ ] Skill range filter in shuffle settings
-- [ ] Prominent player: recording selector (first by default), play/pause, speed presets, loop.
+- [x] Full-screen shuffle view, Practiced/Skip (Skip persists nothing), inline skill slider
+- [x] Skill range filter in shuffle settings
+- [x] Prominent player: recording selector (first by default), play/pause, speed presets, loop.
       Speed and loop stay set across cards.
-- [ ] Settings: temperatures, kind checkboxes
-- [ ] Unit tests for sampling distribution at temperature extremes
+- [x] Settings: temperatures, kind checkboxes
+- [x] Unit tests for sampling distribution at temperature extremes
+
+M6 notes:
+- Domain (`domain/shuffle.ts`, pure, no Svelte or Automerge): `shuffleCandidates` / `matchesShuffle`
+  (live pieces of the enabled kinds, in the skill range, optionally passing the list filter, minus
+  `shown`), `toCandidate` (effective last-practiced, count and skill from `index.stats` /
+  `effectiveSkill`), `features` (A, S, F), `weights` (features, logits and probabilities, for
+  debugging and tests), `pickNext(candidates, settings, rng, now)`, the slider mapping
+  (`temperatureAt` / `sliderPosition` / `temperatureLabel`) and `seededRng` (mulberry32).
+  `setShuffleSettings` in `ops.ts` merges field by field like `setListSettings`. Tests in
+  `domain/shuffle.test.ts`: each factor at a tiny temperature picks the extreme piece ≥ 99% of 2000
+  seeded draws; all-∞ passes a chi-square test over 20 000 draws; candidates drop shown pieces,
+  unwanted kinds and out-of-range skill; unrated counts as 1 (both for S and the range); a Part's
+  inherited skill; practice on a Set making its tune fresh; extreme and infinite logits; slider
+  round-trips; settings on Automerge docs with a concurrent merge.
+- UI: the `/shuffle` route (card, keyboard shortcuts, empty states), `ShufflePlayer.svelte`,
+  `ShuffleSettings.svelte` (a dialog sheet) and `SkillRange.svelte` (two native range inputs on one
+  track). The root layout leaves out the mini-player bar on `/shuffle`.
+- E2E (`e2e/shuffle.test.ts`, mobile and desktop): full-screen with no mini-player; key, first
+  notes and tags on the card; Practiced logs (with the slider's skill) and advances; Skip logs
+  nothing but keeps a skill change; the "been through everything" state and Restart; uploaded WAVs
+  played from the shuffle player, the recording picker and a clip in another key, speed presets and
+  ±5%, loop, pause; Skip stopping playback with speed and loop kept; Parts via the kind checkbox,
+  the live count, the skill range, temperatures and "respect list filter" surviving a reload; the
+  "Nothing to shuffle" state → Change settings → a card is dealt.
 
 **M7: Backend (as needed)**
 - [ ] Self-hosted sync server; migrate the doc off the public relay
@@ -1062,6 +1087,41 @@ M5 notes:
   so the snapshot is simpler and safer. The snapshot lives only in the Undo toast (not persisted).
 - **"Merge with…"** is on the card and detail overflow menus. It opens a picker (the piece itself
   excluded), then the M3 merge dialog with the current piece preselected as the one to keep.
+
+**Decided during M6 (2026-10-22)**
+
+- **Constants:** horizon 60 days; the "practised a lot" half of F saturates at 20 practices
+  (`CAP_COUNT`). Neither is a setting yet.
+- **Temperature sliders** have 21 notches: 0–19 run log-evenly from T = 0.05 to T = 10, and the
+  top notch is ∞ (stored as `null`, as M0 decided). Stored values snap to the nearest notch only
+  when the slider moves; the defaults (0.5, 1, 2) stay as they are. Sliders read left = "Stalest
+  first" / "Weakest first" / "Favorites first", right = "Random", with words (Very strong … Faint,
+  Off) as the value. A temperature of 0 (or so small that logits overflow) gives every top piece an
+  equal share instead of NaN.
+- **Session state** (`shown`, the current card) lives in the route component only, so leaving
+  Shuffle or reloading starts a new round. Candidates are recomputed at each pick, so practice,
+  edits and setting changes (on any device) apply from the next card on. A card whose piece is
+  deleted or merged away elsewhere is skipped. With no card up, one is dealt as soon as something
+  unshown matches (after changing settings from the "Nothing to shuffle" state, say).
+- **The skill slider saves as it moves**, like the detail view's: it's an explicit edit, so Skip
+  keeps it and leaving Shuffle doesn't lose it. Practiced records the skill as `skillAfter` when
+  it differs from the piece's own skill when the card came up. Moving the slider on a Part gives it
+  its own skill, as in the detail view. Practiced logs `via: 'shuffle'` and shows no Undo toast,
+  since it would cover the buttons. So an accidental Practiced in Shuffle stays logged for now
+  (the detail view's history has no per-entry removal yet).
+- **"Respect current list filter"** applies the list's saved filters (`settings.list`: kind, tags,
+  skill, key, favorites, practiced, recordings) on top of the shuffle's own kind and skill range;
+  the list's search text isn't saved, so it doesn't apply. Stored as an optional
+  `settings.shuffle.respectListFilter`, so no migration.
+- **Player:** Shuffle drives the global player store and adapters. It loads the chosen recording
+  paused, so play starts at once; advancing, Restart and leaving Shuffle close the player. Speed
+  and loop live in the store, so they carry across cards (speed is also the per-device default, as
+  in M4). The mini-player bar isn't rendered on `/shuffle`, so Shuffle hosts the YouTube iframe
+  itself. Recordings that only link out are listed as ↗ links when nothing plays in the app.
+- **Keyboard:** Space plays/pauses, P is Practiced, S is Skip, unless focus is on a control or the
+  settings sheet is open. A hint line shows on devices with a fine pointer.
+- **Two-handle skill range** is two native range inputs on one track, so each handle stays
+  labelled and keyboard-operable; they can meet but not cross.
 
 **Still open**
 

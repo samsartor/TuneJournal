@@ -1,6 +1,7 @@
 <script lang="ts">
 	import '../app.css';
 	import { onMount } from 'svelte';
+	import { page } from '$app/state';
 	import { library } from '#lib/store/library.svelte.ts';
 	import { pwaUpdate } from '#lib/pwa/update.svelte.ts';
 	import { audioFiles } from '#lib/store/audio.svelte.ts';
@@ -11,6 +12,9 @@
 	import type { LayoutProps } from './$types';
 
 	let { children }: LayoutProps = $props();
+
+	// Shuffle is full-screen with a player of its own (§6.5), so the mini-player bar steps aside.
+	const fullScreen = $derived(page.route.id?.startsWith('/shuffle') ?? false);
 
 	onMount(() => {
 		library.load();
@@ -23,5 +27,5 @@
 
 {@render children()}
 
-<PlayerBar />
+{#if !fullScreen}<PlayerBar />{/if}
 <Toasts />
