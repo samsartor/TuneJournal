@@ -95,8 +95,15 @@ Notes on the SvelteKit 3 setup:
   `vite.config.ts` defines `__BUILD_ID__` for the cache name instead.
 - The service worker is registered automatically by Kit. It never calls `skipWaiting()` on
   its own; `src/lib/pwa/update.svelte.ts` posts `SKIP_WAITING` when the user accepts the toast.
-- `vite preview` doesn't do the SPA fallback for deep links; the static host must serve
-  `index.html` for unknown paths.
+- The static host must serve `index.html` for unknown paths. (`vite preview` renders deep links
+  itself, so it hides a missing fallback.)
+- `paths.relative` is `false`, because the service worker serves one cached shell for every route
+  and `./_app/...` URLs would break under `/spike/share` and other nested paths. `vite preview`
+  rendered relative paths before this change.
+- Vite doesn't apply `define` to the service worker in dev, so `__BUILD_ID__` is read through
+  `typeof` with a `'dev'` fallback. Before that fix the dev service worker failed to evaluate.
+- Public build-time config goes in `src/env.ts` (`defineEnvVars`) and is imported from
+  `$app/env/public`. The Google IDs are set up this way (`app/.env.example`).
 
 ---
 
@@ -410,6 +417,10 @@ RNG, so it's unit-testable.
   - `HtmlAudioAdapter` plays blob or URL sources. It enforces `start`/`end` and uses
     `preservesPitch`.
   - `YouTubeAdapter` uses the IFrame Player API with `start`/`end` and `setPlaybackRate`.
+    The M0 spike found that it honours arbitrary rates (every 0.05 step from 0.50 to 1.00), even
+    though `getAvailablePlaybackRates()` only lists `[0.25, 0.5, 0.75, 1, …, 2]`. The same speed
+    UI therefore works for both adapters. YouTube's own pitch correction applies, and we can't
+    turn it off.
   - `LinkOutAdapter` (Spotify, thesession, unknown) opens the URL in a new tab.
 - The **trim editor** uses wavesurfer.js with the regions plugin on file-backed sources. For
   YouTube it uses a simple dual-handle slider with time readout and preview, since we can't
@@ -423,42 +434,102 @@ outside the app show an ↗ affordance.
 
 ## 7. Integrations
 
-Initial CORS findings (checked 2026-10-22) and planned approach:
+Results of the M0 spike (2026-10-22, see §7.1 for evidence) and the planned approach:
 
 | Source | Client-side? | Approach | Backend needed for |
 |---|---|---|---|
-| **thesession.org** | ✅ `Access-Control-Allow-Origin: *` on `?format=json` | Search `/tunes/search?q=`, details `/tunes/{id}` (type, aliases, settings w/ ABC), `/tunes/{id}/sets`, `/tunes/{id}/recordings`. Cache responses in IndexedDB with a TTL. Be polite: debounce search and throttle requests. | Nothing |
-| **Google Drive** | ✅ (expected) | Google Identity Services token client + Picker API, `drive.file` scope. That scope is non-sensitive, so the app needs no Google verification and sees only files the user picks or the app creates. Download with `files.get?alt=media` + bearer token → blob → OPFS cache. | Nothing. Tokens are short-lived, so a re-auth prompt is acceptable. |
-| **Pixel Recorder** | ❌ | The only API is the unofficial cookie-based web API used by `google-recorder-cli`, which needs headless Chrome to refresh cookies. That's fragile and server-only. **v1 path:** the Recorder app's *Share* button sends the audio file to our PWA through the **Web Share Target API** (Android, installed PWA). Alternatively, the user saves to Drive and picks it there. | Optional later: a proxy using `google-recorder-cli` on the VPS for browsing and bulk import |
-| **YouTube** | ✅ for playback | IFrame player with clip start/end. Title/thumbnail via oEmbed, but CORS needs a spike; fall back to noembed or just the URL. No offline playback. | `yt-dlp` → audio file → asset storage, for offline use and waveform trimming |
-| **Spotify** | Link only | Open the URL. Title/thumbnail via oEmbed (spike CORS). Full playback would need Premium and the Web Playback SDK, so it's out of scope. | — |
-| **folkfriend.app** | Link (TBD) | Treat as a non-audio source with custom decoration. Check whether it exposes stable tune IDs that map to thesession IDs. | — |
+| **thesession.org** | ✅ **confirmed**. All four endpoints send `ACAO: *` and were fetched from a page in headless Chromium | Client: `src/lib/integrations/thesession.ts` (fixtures + tests). Search `/tunes/search?q=` (honours `perpage`, results carry no aliases or settings). Details `/tunes/{id}` (type, aliases, `recordings` count, settings with `key` such as `Edorian` plus the ABC body). `/tunes/{id}/sets` is paged at a fixed 10 and ignores `perpage`; its entries are *settings*, so the tune id has to be parsed from the URL, and keys there are abbreviated (`Edor`). `/tunes/{id}/recordings` returns everything (197 for Cooley's) plus `recorded_with` counts. Cache in IndexedDB with a TTL, debounce search, throttle. | Nothing |
+| **Google Drive** | ✅ CORS **confirmed** (the preflight for `files/{id}?alt=media` and for multipart upload allows `authorization` and reflects the origin). End-to-end is **pending manual test** (needs credentials) | Google Identity Services token client + Picker API, `drive.file` scope. That scope is non-sensitive, so the app needs no Google verification and sees only files the user picks or the app creates. Download with `files.get?alt=media` + bearer token → blob → OPFS cache. Upload with multipart into an app-created `TuneJournal/` folder. Spike: `/spike/drive`; setup steps in `spikes/README.md`. Config comes from `PUBLIC_GOOGLE_{CLIENT_ID,API_KEY,APP_ID}`. | Nothing. Tokens are short-lived, so a re-auth prompt is acceptable. |
+| **Pixel Recorder** | ❌ API. ✅ the Share Target path works end-to-end in desktop Chromium; the Android share sheet is **pending manual test** | The only API is the unofficial cookie-based web API used by `google-recorder-cli`, which needs headless Chrome to refresh cookies. That's fragile and server-only. **v1 path:** the Recorder app's *Share* button sends the audio file to our PWA through the **Web Share Target API** (Android, installed PWA). Alternatively, the user saves to Drive and picks it there. The manifest `share_target` POSTs multipart to `/spike/share-target`. The service worker stores the files in OPFS (falling back to IndexedDB where `createWritable` is missing in the SW) and 303-redirects to `/spike/share`. Text and URL shares are kept too. | Optional later: a proxy using `google-recorder-cli` on the VPS for browsing and bulk import |
+| **YouTube** | ✅ **confirmed** for playback and oEmbed | IFrame player with clip start/end, our own loop (seek back to `start` on `end`), and `setPlaybackRate` with any 0.05 step (measured: 0.85 requested → media clock 0.87×). `youtube.com/oembed?format=json` reflects the request `Origin` in `ACAO`, so it works from the browser. noembed.com (`ACAO: *`) is the fallback. No offline playback. | `yt-dlp` → audio file → asset storage, for offline use and waveform trimming |
+| **Spotify** | Link only. oEmbed ✅ **confirmed** (`ACAO: *`) | Open the URL. Title and thumbnail come from `open.spotify.com/oembed?url=` (also `iframe_url` for an optional embed). noembed doesn't support Spotify. Full playback would need Premium and the Web Playback SDK, so it's out of scope. | — |
+| **folkfriend.app** | Link to the app only. Nothing to query | A Vue SPA. Search and tune data run in a local web worker (an offline index of thesession data), with no public API. Its tune IDs *are* thesession tune and setting IDs, and its tune page links to `thesession.org/tunes/{id}`. But `/tune` gets its `tuneID` as in-memory router params, so `folkfriend.app/tune?…` URLs aren't deep-linkable, and a reload shows "No tune loaded". Treat it as a plain link to `https://folkfriend.app/` with custom decoration. `external.thesession` already holds the identity, so `external.folkfriend` can be dropped. | — |
 | **jigripper.com** | TBD (deferred) | Tune identification from a recording. It appears to run a model in the browser, so it might be embeddable or reusable client-side with no backend. Investigate post-MVP. | Possibly none |
-| **Uploads** | ✅ local | Stored in OPFS immediately. For cross-device sync, **upload to the user's own Drive** (an app-created `TuneJournal/` folder through `drive.file`) until we run our own asset store. | Own S3 store later (optional) |
+| **Uploads** | ✅ local (OPFS write, read and `<audio>` playback confirmed) | Stored in OPFS immediately. For cross-device sync, **upload to the user's own Drive** (an app-created `TuneJournal/` folder through `drive.file`) until we run our own asset store. | Own S3 store later (optional) |
 
 **Proposal: use Google Drive as the asset store in v1.** It removes the need for a backend for
 file storage entirely. It also keeps the user's audio in the user's own account, which suits a
 local-first app.
 
 ### 7.1 Integration spike (Milestone 0)
-A throwaway page under `spikes/`. For each item, record the result back into this table:
-- [ ] thesession: search, tune, sets, and recordings from the browser. CORS is already confirmed
-      for GET.
-- [ ] Drive: GIS token flow + Picker + `alt=media` fetch of an m4a, then playback from a blob.
-- [ ] Web Share Target: share an m4a from Pixel Recorder into the installed PWA. Receive it in
-      the service worker and store it in OPFS.
-- [ ] YouTube: IFrame clip playback with `start`/`end`/`setPlaybackRate`. Check oEmbed CORS.
-- [ ] Spotify oEmbed CORS.
-- [ ] folkfriend: what's linkable, and what's queryable? (jigripper is deferred to M8.)
-- [ ] `preservesPitch` slow-down quality at 0.5–0.75× on Android Chrome and desktop, for m4a
-      from Drive and Recorder.
-- [ ] Automerge in the SvelteKit static build. Check that WASM loads with the service worker
-      offline, and that two browsers sync through `sync.automerge.org`.
+The spike pages are routes in the app under `/spike` (`app/src/routes/spike/`, helpers in
+`app/src/lib/spike/`), because the Share Target needs the real manifest and service worker.
+Manual steps are in `spikes/README.md`. Evidence comes from `curl -H 'Origin: https://example.com'`
+and headless Chromium 154 (playwright-core driving the system browser) against the dev and
+preview servers.
 
-**Exit criterion:** decide whether the backend is needed before Milestone 4. My expectation is
-that it isn't. With CORS open on thesession, Drive working client-side, and Share Target
-covering Recorder, the backend can wait until we want `yt-dlp`, a private sync relay, or
-Recorder browsing.
+- [x] **thesession:** search, tune, sets and recordings from the browser. Confirmed: the
+      `/spike/thesession?smoke` page fetched all four from headless Chromium (search 10 hits,
+      tune 33 settings, sets total 2328, recordings 197), and curl shows `ACAO: *` and
+      `ACAM: GET` on each. Typed client in `src/lib/integrations/thesession.ts`, with trimmed
+      fixtures and tests in `fixtures/`.
+      **Settings shape for autofill:** `settings[] = { id, url, key, abc, member, date }`.
+      `key` is the tonic plus the full mode name (`Edorian`, `Eminor`, `F#minor`), and `abc` is
+      the tune body only (no `X:`/`K:` header, `!` = line break), e.g.
+      `|:D2|EBBA B2 EB|B2 AB dBAG|…`. One tune can have settings in several keys (Cooley's:
+      29 Edor, 3 Emin, 1 Ddor). The client provides `parseKey()`, which normalizes full and
+      abbreviated modes to `{tonic, mode}`, and `firstBars(abc, 2)` → `D2 | EBBA B2 EB | B2 AB dBAG`,
+      which keeps a pickup bar without counting it. Settings carry no meter; it's implied by
+      `type`, and set entries do include `meter`.
+- [ ] **Drive:** GIS token flow + Picker + `alt=media` fetch of an m4a, then playback from a blob.
+      *Pending manual test* (needs your Google credentials, see `spikes/README.md` §1). Ready:
+      `/spike/drive` covers sign-in → pick → download → OPFS → `<audio>`, plus find-or-create of
+      `TuneJournal/` and a multipart upload. CORS for the API calls is confirmed by preflight
+      (`authorization` and `content-type` allowed, origin reflected).
+- [ ] **Web Share Target:** share an m4a from Pixel Recorder into the installed PWA, receive it
+      in the service worker and store it in OPFS. *Pending manual test on Android*
+      (`spikes/README.md` §2). Everything except the OS share sheet is confirmed in headless
+      Chromium: a multipart POST navigation to `/spike/share-target` → the service worker stores
+      `test.m4a` (`audio/x-m4a`, 25 KiB) in OPFS → 303 → `/spike/share` lists it and it plays
+      (duration 3 s). This works on both `vite preview` and the dev server. Normal service-worker
+      behaviour is unaffected: offline reloads of `/`, `/spike/share` and `/spike/speed` all
+      render, and GETs still take the existing path.
+- [x] **YouTube:** IFrame clip playback with `start`/`end`/`setPlaybackRate`, and oEmbed CORS.
+      Confirmed in headless Chromium on `/spike/youtube`:
+      - `getAvailablePlaybackRates()` → `[0.25,0.5,0.75,1,1.25,1.5,1.75,2]`, but
+        `setPlaybackRate` accepts every 0.05 step from 0.50 to 1.00 (`getPlaybackRate()` echoes
+        each one), and the media clock really runs at the requested rate (0.85 → 0.87×
+        measured). **So the speed UI can use 0.05 steps for YouTube too, not just presets.**
+      - `end` only stops the first play, so loop is our own seek back to `start`.
+      - oEmbed: `youtube.com/oembed` returns `ACAO: <request origin>` and fetches from the page.
+        noembed.com has `ACAO: *` as a fallback.
+- [x] **Spotify oEmbed CORS:** confirmed. `open.spotify.com/oembed` returns `ACAO: *` with
+      `title`, `thumbnail_url` and `iframe_url`. noembed returns "no matching providers" for
+      Spotify.
+- [x] **folkfriend:** what's linkable, and what's queryable? Linkable: only the app root.
+      Queryable: nothing. It's a client-side worker over bundled thesession data, it uses
+      thesession tune and setting IDs, and its `/tune` view isn't URL-addressable. See the table.
+      (jigripper is deferred to M8.)
+- [ ] **`preservesPitch` slow-down quality** at 0.5–0.75× on Android Chrome and desktop, for m4a
+      from Drive and Recorder. *Pending manual listening test* (`spikes/README.md` §3) on
+      `/spike/speed`, which has presets of 50/60/75/90/100%, ±5% steps, loop and a
+      preservesPitch toggle. Mechanically confirmed in Chromium: `preservesPitch` is unprefixed
+      and true by default, `playbackRate = 0.5` plays at 0.46–0.5× wall-clock, and m4a (AAC)
+      decodes. Caveats, from MDN and not tested here: Chrome throws for rates outside 0.0625–16×,
+      and Firefox mutes audio outside 0.25–4×. Safari may need `webkitPreservesPitch`, so the
+      adapter should set both (the spike does). How it sounds at 0.5–0.6× is exactly what the
+      listening test is for. If it's poor, the M8 time-stretch engine moves up.
+- [x] **Automerge** in the SvelteKit static build. WASM loads with the service worker offline,
+      and two browsers sync through `sync.automerge.org`. Confirmed with two isolated headless
+      Chromium contexts (separate storage) on `/spike/sync`: B opened A's new doc by URL in
+      0.8–1.3 s, including page load. Alternating changes then propagated click-to-render in
+      **130–275 ms** over two runs of five (about 200 ms and about 270 ms medians).
+      Offline reload re-confirmed on the production build: the home page opens the Library
+      from IndexedDB, so WASM loads from the precache.
+
+**Exit decision (2026-10-22): no backend before Milestone 4.** Every v1 integration works from
+the browser:
+- thesession, YouTube oEmbed and Spotify oEmbed all have permissive CORS.
+- Drive's REST endpoints accept bearer-token CORS requests, and GIS and the Picker are
+  client-side by design.
+- The Share Target covers Recorder without a server.
+- The public relay syncs in 0.2–0.3 s.
+
+The backend (§8) stays deferred until we want offline/waveform YouTube (`yt-dlp`), a private or
+E2EE sync relay, or Recorder browsing. If the two pending manual tests fail, the fallbacks are
+still client-side: Recorder → "Save to Drive" → Picker, and the M8 time-stretch engine for
+quality. The only thing that would pull the backend forward is a Drive failure that a
+client-side fix can't solve. That's unlikely, given the preflights.
 
 ---
 
@@ -515,7 +586,7 @@ When it arrives, it's a single small service on the VPS, deployed with Docker Co
 │  ├─ src/service-worker/    precache + cache-first app shell (own tsconfig)
 │  └─ static/                manifest.webmanifest, icons/
 ├─ server/                   (later) Hono backend + Dockerfile + compose
-└─ spikes/                   throwaway experiments
+└─ spikes/                   M0 manual test guide (spike code: app/src/routes/spike, app/src/lib/spike)
 ```
 
 The domain layer never imports Svelte or Automerge internals directly. It takes a mutable
@@ -527,9 +598,11 @@ against plain objects.
 ## 11. Milestones
 
 **M0: Spikes** (§7.1)
-- [ ] Integration spike results recorded in §7
-- [ ] Final Automerge/Evolu decision recorded in §4
-- [ ] Backend-timing decision recorded
+- [x] Integration spike results recorded in §7 (Drive, the Android share sheet and the slow-down
+      listening test are pending manual tests; see `spikes/README.md`)
+- [ ] Final Automerge/Evolu decision recorded in §4 (the spike found nothing against Automerge:
+      sync and offline WASM both work)
+- [x] Backend-timing decision recorded: not before M4 (§7.1)
 
 **M1: Skeleton and core list**
 - [ ] SvelteKit static + PWA + CI (typecheck, lint, vitest, build), deployed to a static host

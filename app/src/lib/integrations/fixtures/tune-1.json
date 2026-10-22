@@ -1,0 +1,82 @@
+{
+	"format": "json",
+	"id": 1,
+	"name": "Cooley's",
+	"url": "https://thesession.org/tunes/1",
+	"member": {
+		"id": 1,
+		"name": "Jeremy",
+		"url": "https://thesession.org/members/1"
+	},
+	"date": "2001-05-14 18:45:18",
+	"type": "reel",
+	"tunebooks": 6826,
+	"recordings": 3,
+	"collections": 4,
+	"aliases": [
+		"Cooley's",
+		"Cooleys",
+		"Joe Cooley",
+		"Joe Cooley's",
+		"Joe Cooley's Fancy",
+		"Joe Cooleys",
+		"Luttrell's Pass",
+		"Put The Cake In The Dresser",
+		"Put The Cake On The Dresser",
+		"Reaping The Rye",
+		"Ríl Na Tulaí",
+		"The Tulla"
+	],
+	"settings": [
+		{
+			"id": 1,
+			"url": "https://thesession.org/tunes/1#setting1",
+			"key": "Edorian",
+			"abc": "|:D2|EBBA B2 EB|B2 AB dBAG|FDAD BDAD|FDAD dAFD|! EBBA B2 EB|B2 AB defg|afec dBAF|DEFD E2:|! |:gf|eB B2 efge|eB B2 gedB|A2 FA DAFA|A2 FA defg|! eB B2 eBgB|eB B2 defg|afec dBAF|DEFD E2:|",
+			"member": {
+				"id": 1,
+				"name": "Jeremy",
+				"url": "https://thesession.org/members/1"
+			},
+			"date": "2001-05-14 18:45:18"
+		},
+		{
+			"id": 12342,
+			"url": "https://thesession.org/tunes/1#setting12342",
+			"key": "Eminor",
+			"abc": "|:F|CGGC G2 CG|G2 FG BGFE|(3DCB, FB, GB,FB,|DB,DF BFDB,|! CGGC G2 CG|G2 FG Bcde|fdcd BGFB|B,CDF C3:|! |:d|cG ~G2 cede|cG ~G2 ecBG|(3FGF DF B,FDF|GFDF Bcde|! cG ~G2 cede|cG ~G2 Bcde|fdcd BGFB|B,CDF C3:|",
+			"member": {
+				"id": 2673,
+				"name": "donnchad",
+				"url": "https://thesession.org/members/2673"
+			},
+			"date": "2002-06-11 15:43:50"
+		},
+		{
+			"id": 12343,
+			"url": "https://thesession.org/tunes/1#setting12343",
+			"key": "Eminor",
+			"abc": "|:D2|EBBA B2 EB|B2 AB dBAG|FDAD BDAD|FDAD dAFD|! EBBA B2 EB|B2 AB defg|afef dBAF|DEFD E2:|! |:gf|eB ~B2 eBgB|eB ~B2 {a}gedB|A2 FA DFAB|BA FA defg|! eB ~B2 eBgB|eB B2 defg|afef dBAF|DEFD E2:|",
+			"member": {
+				"id": 41592,
+				"name": "middlefaster",
+				"url": "https://thesession.org/members/41592"
+			},
+			"date": "2008-06-15 13:53:38"
+		}
+	],
+	"comments": [
+		{
+			"id": 1,
+			"url": "https://thesession.org/tunes/1#comment1",
+			"subject": "",
+			"content": "This reel originally went under a different name (The Tulla Reel) but has since become associated with the master accordian player, Joe Cooley. You'll almost always hear this tune played with \"The Wise Maid\" or \"The Maid Behind The Bar.",
+			"member": {
+				"id": 1,
+				"name": "Jeremy",
+				"url": "https://thesession.org/members/1"
+			},
+			"date": "2001-05-25 20:16:44"
+		}
+	]
+}

@@ -1,0 +1,83 @@
+{
+	"format": "json",
+	"perpage": "3",
+	"pages": 776,
+	"page": 1,
+	"total": 2328,
+	"sets": [
+		{
+			"id": 153106,
+			"name": "Drowsy Maggie, The Kesh, Cooley's, The Butterfly, Morrison's, The Silver Spear, The Maid Behind The Bar, Banish Misfortune, The Banshee, Out On The Ocean, The Wind That Shakes The Barley, Tam Lin, The Swallowtail, The Musical Priest, The Connaughtman's Rambles, The Blarney Pilgrim, The Rights Of Man, King Of The Fairies, The Harvest Home, The Lilting Banshee, The Kid On The Mountain, Sí Bheag Sí Mhór, The Gravel Walks, The Sally Gardens, The Lark In The Morning, The Mountain Road, Saint Anne's, The Cliffs Of Moher, The Mason's Apron, Calliope House, John Ryan's, The Boys Of Bluehill, Off To California, Inisheer, The Star Of Munster, The Cup Of Tea, The Merry Blacksmith, Tripping Up The Stairs, Toss The Feathers, The Irish Washerwoman, The Bucks Of Oranmore, The Morning Dew, A Fig For A Kiss, The Wise Maid, Miss McLeod's, My Darling Asleep, The Road To Lisdoonvarna, The Britches Full Of Stitches, The Earl's Chair, The Convenience",
+			"url": "https://thesession.org/members/191000/sets/153106",
+			"date": "2026-10-21 10:55:30",
+			"member": {
+				"id": 191000,
+				"name": "Joey Robichaux",
+				"url": "https://thesession.org/members/191000"
+			},
+			"settings": [
+				{
+					"id": 27,
+					"name": "Drowsy Maggie",
+					"url": "https://thesession.org/tunes/27#setting27",
+					"type": "reel",
+					"meter": "4/4",
+					"key": "Edor"
+				},
+				{
+					"id": 55,
+					"name": "The Kesh",
+					"url": "https://thesession.org/tunes/55#setting55",
+					"type": "jig",
+					"meter": "6/8",
+					"key": "Gmaj"
+				},
+				{
+					"id": 1,
+					"name": "Cooley's",
+					"url": "https://thesession.org/tunes/1#setting1",
+					"type": "reel",
+					"meter": "4/4",
+					"key": "Edor"
+				}
+			]
+		},
+		{
+			"id": 152982,
+			"name": "Niel Gow's Lament For His Second Wife, Ag Críost An Síol, The Lisnagun, The Ballintore Fancy, Cooley's, Táimse Im' Chodladh, The Parting Glass, Magh Seóla, The Kesh, My Darling Asleep, John Brosnan's, The Curlew, Wild Mountain Thyme, Lucy Farr's, The Minstrel Boy, Paddy's Green Shamrock Shore, Ar Éirinn Ní Neosfainn Cé Hí, The Girl Who Was Poorly Clad, The Plains Of Boyle, The Miners Of Wicklow, Pull The Knife And Stick It Again, Coffee, The Humours Of Bandon, The Hearty Boys Of Ballymote",
+			"url": "https://thesession.org/members/198272/sets/152982",
+			"date": "2026-10-20 11:49:06",
+			"member": {
+				"id": 198272,
+				"name": "Anna Chagina",
+				"url": "https://thesession.org/members/198272"
+			},
+			"settings": [
+				{
+					"id": 1892,
+					"name": "Niel Gow's Lament For His Second Wife",
+					"url": "https://thesession.org/tunes/1892#setting1892",
+					"type": "jig",
+					"meter": "6/8",
+					"key": "Dmaj"
+				},
+				{
+					"id": 23247,
+					"name": "Ag Críost An Síol",
+					"url": "https://thesession.org/tunes/13305#setting23247",
+					"type": "polka",
+					"meter": "2/4",
+					"key": "Gmaj"
+				},
+				{
+					"id": 46053,
+					"name": "The Lisnagun",
+					"url": "https://thesession.org/tunes/3842#setting46053",
+					"type": "jig",
+					"meter": "6/8",
+					"key": "Gmaj"
+				}
+			]
+		}
+	]
+}

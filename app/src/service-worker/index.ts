@@ -1,9 +1,11 @@
 import { self } from '$app/service-worker';
 import { immutable, assets } from '$app/manifest';
+import { handleShareTarget, isShareTarget } from '#lib/spike/share-target.ts';
 
 declare const __BUILD_ID__: string;
 
-const CACHE = `tunejournal-${__BUILD_ID__}`;
+// Vite only substitutes `define`s at build time here, so the dev server leaves it undeclared.
+const CACHE = `tunejournal-${typeof __BUILD_ID__ === 'string' ? __BUILD_ID__ : 'dev'}`;
 
 const scoped = (path: string) => new URL(path, self.registration.scope).href;
 
@@ -34,6 +36,10 @@ self.addEventListener('message', (event) => {
 
 self.addEventListener('fetch', (event) => {
 	const { request } = event;
+	if (isShareTarget(request, self.registration.scope)) {
+		event.respondWith(handleShareTarget(request, self.registration.scope));
+		return;
+	}
 	if (request.method !== 'GET') return;
 	const url = new URL(request.url);
 	if (url.origin !== self.location.origin) return;

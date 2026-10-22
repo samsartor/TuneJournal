@@ -1,0 +1,67 @@
+{
+	"format": "json",
+	"perpage": "3",
+	"id": 1,
+	"name": "Cooley's",
+	"url": "https://thesession.org/tunes/1/recordings",
+	"member": {
+		"id": 1,
+		"name": "Jeremy",
+		"url": "https://thesession.org/members/1"
+	},
+	"date": "2001-05-14 18:45:18",
+	"type": "reel",
+	"aliases": [],
+	"recorded_with": [
+		{
+			"id": 118,
+			"name": "The Wise Maid",
+			"url": "https://thesession.org/tunes/1/recordings/118",
+			"number": 14
+		},
+		{
+			"id": 27,
+			"name": "Drowsy Maggie",
+			"url": "https://thesession.org/tunes/1/recordings/27",
+			"number": 13
+		},
+		{
+			"id": 73,
+			"name": "The Musical Priest",
+			"url": "https://thesession.org/tunes/1/recordings/73",
+			"number": 6
+		}
+	],
+	"recordings": [
+		{
+			"id": 3536,
+			"name": "Dans Tous Les Cantons",
+			"url": "https://thesession.org/recordings/3536",
+			"artist": {
+				"id": 2004,
+				"name": "Accordéonistes Du Québec",
+				"url": "https://thesession.org/recordings/artists/2004"
+			}
+		},
+		{
+			"id": 872,
+			"name": "Traditional Irish Music From Belfast",
+			"url": "https://thesession.org/recordings/872",
+			"artist": {
+				"id": 4065,
+				"name": "Alan McCartney, Paul Bradley, Jason O'Rourke, Brendan O'Hare and Ray Gallen",
+				"url": "https://thesession.org/recordings/artists/4065"
+			}
+		},
+		{
+			"id": 5240,
+			"name": "Aly Bain and Mike Whellans",
+			"url": "https://thesession.org/recordings/5240",
+			"artist": {
+				"id": 3193,
+				"name": "Aly Bain and Mike Whellans",
+				"url": "https://thesession.org/recordings/artists/3193"
+			}
+		}
+	]
+}

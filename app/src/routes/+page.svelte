@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import { library } from '#lib/store/library.svelte.ts';
 
 	const pieceCount = $derived(
@@ -17,6 +18,8 @@
 	{:else}
 		<p class="muted">Loading library…</p>
 	{/if}
+
+	<p class="muted"><a href={resolve('/spike')}>Integration spikes</a></p>
 </main>
 
 <style>

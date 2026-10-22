@@ -13,7 +13,10 @@ export default defineConfig({
 					filename.split(/[/\\]/).includes('node_modules') ? undefined : true
 			},
 			// Pure SPA: every unknown path falls back to index.html, which boots the client router.
-			adapter: adapter({ fallback: 'index.html' })
+			adapter: adapter({ fallback: 'index.html' }),
+			// The service worker serves one cached shell for every route, so its asset URLs must not
+			// be relative to the page (`vite preview` renders `./_app/...` otherwise).
+			paths: { relative: false }
 		})
 	],
 	define: {
