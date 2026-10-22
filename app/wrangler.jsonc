@@ -1,0 +1,11 @@
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "tunejournal",
+	"compatibility_date": "2026-10-01",
+	// Static-only deploy of the adapter-static build; no Worker script. Unknown paths serve
+	// index.html so the client router can take over (matches `fallback: 'index.html'`).
+	"assets": {
+		"directory": "./build",
+		"not_found_handling": "single-page-application"
+	}
+}
