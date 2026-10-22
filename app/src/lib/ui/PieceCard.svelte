@@ -1,7 +1,8 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
 	import { hasKey, type LibraryIndex } from '#lib/domain/derived.ts';
-	import { relativeTime, untitled } from '#lib/domain/format.ts';
+	import { KIND_LABEL, KIND_PLURAL, relativeTime, untitled } from '#lib/domain/format.ts';
+	import { CHILD_KIND } from '#lib/domain/relations.ts';
 	import { formatKey } from '#lib/domain/key.ts';
 	import { updatePiece } from '#lib/domain/ops.ts';
 	import type { Piece } from '#lib/domain/types.ts';
@@ -25,6 +26,11 @@
 	const key = $derived(index.effectiveKey(piece));
 	const tags = $derived(index.tagsOf(piece));
 	const providers = $derived(index.providersOf(piece));
+	const childCount = $derived(index.children(piece).length);
+	const inherited = $derived(index.inheritsFrom(piece));
+	const ownKey = $derived(piece.key !== undefined);
+	const ownSkill = $derived(piece.skill !== undefined);
+	const from = $derived(inherited ? (inherited.title ?? untitled(inherited.kind)) : '');
 
 	function toggleFavorite() {
 		library.change((d) => updatePiece(d, piece.id, { favorite: !piece.favorite }));
@@ -51,8 +57,25 @@
 	</div>
 
 	<div class="meta">
-		{#if key && hasKey(piece)}<span class="key">{formatKey(key)}</span>{/if}
-		<SkillDots skill={index.effectiveSkill(piece)} />
+		{#if key && hasKey(piece)}
+			<span class="key" class:inherited={!ownKey} title={ownKey ? undefined : `From ${from}`}
+				>{formatKey(key)}{#if !ownKey}<span class="visually-hidden">, from {from}</span>{/if}</span
+			>
+		{/if}
+		<span
+			class="skill"
+			class:inherited={!ownSkill && inherited?.skill !== undefined}
+			title={!ownSkill && inherited?.skill !== undefined ? `From ${from}` : undefined}
+			><SkillDots skill={index.effectiveSkill(piece)} /></span
+		>
+		{#if childCount > 0}
+			<span class="children" data-testid="child-count"
+				>{childCount}
+				{childCount === 1
+					? KIND_LABEL[CHILD_KIND[piece.kind]].toLowerCase()
+					: KIND_PLURAL[CHILD_KIND[piece.kind]].toLowerCase()}</span
+			>
+		{/if}
 		<span class="last" data-testid="last-practiced">
 			{stats.lastPracticed === undefined
 				? 'Never practiced'
@@ -83,6 +106,7 @@
 			label="More actions for {name}"
 			items={[
 				{ label: 'Edit', run: () => ui.openEdit(piece.id) },
+				{ label: 'Merge with…', run: () => ui.openMergePicker(piece.id) },
 				{ label: 'Delete', run: () => ui.delete(piece.id), danger: true }
 			]}
 		/>
@@ -180,6 +204,20 @@
 	.key {
 		color: var(--color-text);
 		font-weight: 600;
+	}
+
+	/* Inherited from the Part's Tune (§5): shown, but quieter. */
+	.key.inherited {
+		color: var(--color-muted);
+		font-weight: 500;
+	}
+
+	.skill {
+		display: inline-flex;
+	}
+
+	.skill.inherited {
+		opacity: 0.6;
 	}
 
 	.tags {

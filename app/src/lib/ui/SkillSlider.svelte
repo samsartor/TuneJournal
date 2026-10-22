@@ -5,12 +5,23 @@
 	let {
 		skill,
 		onchange,
-		id = 'skill'
-	}: { skill?: Skill; onchange: (skill: Skill | null) => void; id?: string } = $props();
+		id = 'skill',
+		inherited
+	}: {
+		/** The piece's own skill. */
+		skill?: Skill;
+		onchange: (skill: Skill | null) => void;
+		id?: string;
+		/** A Part's Tune's skill, used while the Part has none of its own (§5). */
+		inherited?: { skill?: Skill; from: string };
+	} = $props();
 
+	const shown = $derived(skill ?? inherited?.skill);
+	const isInherited = $derived(skill === undefined && inherited?.skill !== undefined);
 	// 0 stands for unrated, so the range stays keyboard-operable end to end.
-	const value = $derived(skill ?? 0);
-	const label = $derived(skill ? `${skill} · ${SKILL_LABEL[skill]}` : 'Unrated');
+	const value = $derived(shown ?? 0);
+	const label = $derived(shown ? `${shown} · ${SKILL_LABEL[shown]}` : 'Unrated');
+	const valueText = $derived(isInherited ? `${label}, from ${inherited!.from}` : label);
 
 	function input(e: Event) {
 		const n = Number((e.currentTarget as HTMLInputElement).value);
@@ -21,7 +32,9 @@
 <div class="skill">
 	<div class="row">
 		<label for={id}>Skill</label>
-		<output for={id} class:muted={!skill}>{label}</output>
+		<output for={id} class:muted={!skill}
+			>{label}{#if isInherited}<span class="from">{` · from ${inherited!.from}`}</span>{/if}</output
+		>
 	</div>
 	<div class="row">
 		<input
@@ -32,10 +45,15 @@
 			step="1"
 			{value}
 			oninput={input}
-			aria-valuetext={label}
+			aria-valuetext={valueText}
+			class:inherited={isInherited}
 			list="{id}-ticks"
 		/>
-		{#if skill}
+		{#if skill && inherited}
+			<button type="button" class="btn-quiet clear" onclick={() => onchange(null)}>
+				Use {inherited.from}’s
+			</button>
+		{:else if skill}
 			<button type="button" class="btn-quiet clear" onclick={() => onchange(null)}>
 				Clear rating
 			</button>
@@ -66,6 +84,14 @@
 	input {
 		flex: 1;
 		min-width: 0;
+	}
+
+	input.inherited {
+		opacity: 0.55;
+	}
+
+	.from {
+		font-style: italic;
 	}
 
 	.clear {

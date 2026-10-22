@@ -3,6 +3,7 @@
 	import EditModal from '#lib/ui/EditModal.svelte';
 	import ListPane from '#lib/ui/ListPane.svelte';
 	import MergeDialog from '#lib/ui/MergeDialog.svelte';
+	import MergePicker from '#lib/ui/MergePicker.svelte';
 	import type { LayoutProps } from './$types';
 
 	let { children }: LayoutProps = $props();
@@ -20,6 +21,7 @@
 </div>
 
 <EditModal />
+<MergePicker />
 <MergeDialog />
 
 <style>

@@ -1,8 +1,9 @@
 // Values derived from the Library, never stored (PLAN.md §5), plus list filter/sort/search.
 //
-// Practice and skill go through effectivePractice/effectiveSkill. In M1 they return the piece's
-// own values; M5 adds the ancestor walk (practice) and Part → Tune inheritance (skill, key)
-// there without touching the callers.
+// Practice, skill and key go through effectivePractice/effectiveSkill/effectiveKey (PLAN.md §5):
+// practice combines the piece's own entries with every ancestor's (walking parent links with a
+// visited set, since links may form cycles), and a Part without its own skill or key uses its
+// earliest-created parent Tune's.
 
 import { tagKey } from './ops.ts';
 import { PROVIDERS } from './providers.ts';
@@ -43,10 +44,19 @@ export interface LibraryIndex {
 	readonly keys: string[];
 	get(id: PieceId): Piece | undefined;
 	stats(piece: Piece): PieceStats;
-	/** Practice history, most recent first. */
-	effectivePractice(piece: Piece): PracticeEntry[];
+	/**
+	 * Practice history, most recent first: the piece's own entries plus those of every ancestor,
+	 * each inherited one marked with the ancestor it came from (`viaPiece`).
+	 */
+	effectivePractice(piece: Piece): EffectivePracticeEntry[];
+	/** Own skill, else (Parts only) the inherited Tune's. */
 	effectiveSkill(piece: Piece): Skill | undefined;
+	/** Own key, else (Parts only) the inherited Tune's. Undefined for sets and sessions. */
 	effectiveKey(piece: Piece): string | undefined;
+	/** The Tune a Part inherits skill and key from: its earliest-created live parent Tune. */
+	inheritsFrom(piece: Piece): Piece | undefined;
+	/** Live ancestors (parents, their parents, …), nearest first, without the piece itself. */
+	ancestors(piece: Piece): Piece[];
 	/** The piece's clips in order, each with its source (clips whose source is missing are left out). */
 	clipsOf(piece: Piece): ClipWithSource[];
 	/** Has a clip of an actual recording, not just a reference link such as thesession.org. */
@@ -69,6 +79,11 @@ export interface LibraryIndex {
 	withTune(tuneId: number): Piece[];
 	/** Groups of two or more live pieces that share a thesession tune id, oldest group first. */
 	readonly duplicateTunes: DuplicateGroup[];
+}
+
+export interface EffectivePracticeEntry extends PracticeEntry {
+	/** Set on entries inherited from an ancestor (a Set this tune is in, …): that ancestor's id. */
+	viaPiece?: PieceId;
 }
 
 export interface ClipWithSource {
@@ -103,7 +118,7 @@ export function hasKey(piece: Pick<Piece, 'kind'>): boolean {
 
 export function buildIndex(library: Library): LibraryIndex {
 	const live = Object.values(library.pieces).filter(isLive);
-	const practiceCache = new Map<PieceId, PracticeEntry[]>();
+	const practiceCache = new Map<PieceId, EffectivePracticeEntry[]>();
 	const statsCache = new Map<PieceId, PieceStats>();
 
 	const tagCounts = new Map<string, TagUsage>();
@@ -144,16 +159,6 @@ export function buildIndex(library: Library): LibraryIndex {
 		}
 		return clips;
 	};
-	const effectiveKey = (piece: Piece) => (hasKey(piece) ? piece.key : undefined);
-
-	const effectivePractice = (piece: Piece) => {
-		let entries = practiceCache.get(piece.id);
-		if (!entries) {
-			entries = dedupePractice(piece.practice).sort((a, b) => b.at - a.at);
-			practiceCache.set(piece.id, entries);
-		}
-		return entries;
-	};
 
 	// Links grouped by (resolved) end, built on first use.
 	let linksBy: { children: Map<PieceId, Related[]>; parents: Map<PieceId, Related[]> } | undefined;
@@ -179,6 +184,64 @@ export function buildIndex(library: Library): LibraryIndex {
 		return linksBy;
 	};
 
+	const ancestorsCache = new Map<PieceId, Piece[]>();
+	/** Breadth-first up the parent links, so nearer ancestors come first; cycle-safe. */
+	const ancestors = (piece: Piece): Piece[] => {
+		let found = ancestorsCache.get(piece.id);
+		if (found) return found;
+		found = [];
+		const { parents } = relations();
+		const seen = new Set<PieceId>([piece.id]);
+		let frontier = [piece.id];
+		while (frontier.length > 0) {
+			const next: PieceId[] = [];
+			for (const id of frontier) {
+				for (const { piece: parent } of parents.get(id) ?? []) {
+					if (seen.has(parent.id)) continue;
+					seen.add(parent.id);
+					found.push(parent);
+					next.push(parent.id);
+				}
+			}
+			frontier = next;
+		}
+		ancestorsCache.set(piece.id, found);
+		return found;
+	};
+
+	const ownPractice = (piece: Piece) => dedupePractice(piece.practice);
+
+	const effectivePractice = (piece: Piece) => {
+		let entries = practiceCache.get(piece.id);
+		if (!entries) {
+			entries = ownPractice(piece);
+			for (const ancestor of ancestors(piece)) {
+				for (const entry of ownPractice(ancestor))
+					entries.push({ ...entry, viaPiece: ancestor.id });
+			}
+			entries.sort((a, b) => b.at - a.at);
+			practiceCache.set(piece.id, entries);
+		}
+		return entries;
+	};
+
+	const inheritCache = new Map<PieceId, Piece | null>();
+	const inheritsFrom = (piece: Piece): Piece | undefined => {
+		if (piece.kind !== 'part') return undefined;
+		let tune = inheritCache.get(piece.id);
+		if (tune === undefined) {
+			tune = null;
+			for (const { piece: parent } of relations().parents.get(piece.id) ?? []) {
+				if (parent.kind === 'tune' && (!tune || byAge(parent, tune) < 0)) tune = parent;
+			}
+			inheritCache.set(piece.id, tune);
+		}
+		return tune ?? undefined;
+	};
+	const effectiveSkill = (piece: Piece) => piece.skill ?? inheritsFrom(piece)?.skill;
+	const effectiveKey = (piece: Piece) =>
+		hasKey(piece) ? (piece.key ?? inheritsFrom(piece)?.key) : undefined;
+
 	return {
 		library,
 		live,
@@ -196,8 +259,10 @@ export function buildIndex(library: Library): LibraryIndex {
 			}
 			return stats;
 		},
-		effectiveSkill: (piece) => piece.skill,
+		effectiveSkill,
 		effectiveKey,
+		inheritsFrom,
+		ancestors,
 		clipsOf,
 		hasRecordings: (piece) => clipsOf(piece).some(({ source }) => isRecording(source)),
 		providersOf: (piece) => [...new Set(clipsOf(piece).map(({ source }) => source.provider))],

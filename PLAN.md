@@ -735,13 +735,36 @@ M4 notes:
   `page.route` doesn't see requests from a page the service worker controls.
 
 **M5: Relations**
-- [ ] Links: Add child (picker + "New …"), parent/child display, reorder children
-- [ ] Effective practice history: walk ancestors (cycle-safe) for counts, latest, sort, and
-      shuffle. Show "via <Set>" entries in the detail view.
-- [ ] Part → Tune inheritance of skill and key, with muted "from <Tune>" display
-- [ ] Split from a clip region → new child piece on the same source
-- [ ] Merge: manual "Merge with…" picker. (The merge op, the thesession-prompted flow and
-      `mergedInto` redirects were built in M3.)
+- [x] Links: Add child (picker + "New …"), parent/child display, reorder children
+- [x] Effective practice history: walk ancestors (cycle-safe) for counts, latest, sort, and
+      shuffle. Show "via <Set>" entries in the detail view. (Shuffle itself is M6; it will read
+      the same `index.stats`.)
+- [x] Part → Tune inheritance of skill and key, with muted "from <Tune>" display
+- [x] Split from a clip region → new child piece on the same source
+- [x] Merge: manual "Merge with…" picker. (The merge op, the thesession-prompted flow and
+      `mergedInto` redirects were built in M3.) Merge now has Undo.
+
+M5 notes:
+- Domain (`domain/relations.ts`): `CHILD_KIND`, `linkProblem` (`self` / `exists` / `cycle`),
+  `childLinks`, `moveChild` / `moveChildAfter` / `moveChildBy`, `removeLink` / `restoreLink`,
+  `addChild`, `splitPiece`, and `mergeWithUndo` / `undoMerge`. The index (`domain/derived.ts`)
+  gained `ancestors`, `inheritsFrom`, and the real `effectivePractice` / `effectiveSkill` /
+  `effectiveKey`. Tests are in `domain/links.test.ts`: each op on plain objects and Automerge
+  docs, cycles, multiple parents, concurrent link add/remove/reorder on forks, merge then undo,
+  split keeping one Source, and an index build over 3000 linked pieces (about 60 ms here; the
+  test allows 1.5 s).
+- UI: `Related.svelte` (the editable Related section: Add child, drag or ↑/↓ to reorder, × to
+  unlink with Undo, Split), `SplitDialog.svelte` (TrimEditor + name, "Split another"),
+  `MergePicker.svelte` ("Merge with…" → `MergeDialog`), and `PiecePicker` gained `exclude`,
+  "New …" and autofocus. Cards show a muted inherited key/skill and a child count ("2 parts").
+  The detail view shows the inherited key "from <Tune>", the skill slider's inherited value, and
+  "via <Set>" in the practice history. The edit modal offers "Use <Tune>'s key" and the slider
+  "Use <Tune>'s" to go back to inheriting.
+- E2E (`e2e/relations.test.ts`): add existing and new children, the picker hiding the piece and
+  its children, reorder by buttons and (desktop) drag, remove with Undo, the loop warning; practice
+  a Set → the tune shows "via" and its card's "last practiced"; a Part inheriting skill and key,
+  overriding and going back; split two parts from an uploaded recording and play one (player
+  bounds 2.00–4.00), plus a blank split; "Merge with…" from a card, then Undo (survives a reload).
 
 **M6: Shuffle**
 - [ ] Full-screen shuffle view, Practiced/Skip (Skip persists nothing), inline skill slider
@@ -999,6 +1022,46 @@ M4 notes:
   Tune; a shared link (Share → Link) goes through the same attach flow as a pasted one. Shared
   files from Recorder become `upload` sources.
 - **jigripper** isn't hinted at yet; it stays in M8.
+
+**Decided during M5 (2026-10-22)**
+
+- **Child kinds:** "Add Set" on a Session, "Add Tune" on a Set, "Add Part" on a Tune. A Part gets
+  a generic "Add…", whose "New" option makes another Part. Split uses the same kinds ("Split Part"
+  on a Part makes a Part).
+- **Link guards:** the picker leaves out the piece itself and its current children, and
+  `linkPieces` refuses a self-link and keeps an existing link's place. A link that would close a
+  loop (the parent is already somewhere under the child) shows a warning with "Add anyway". The
+  model allows it; practice then flows both ways round the loop, each ancestor counted once.
+- **Reordering children** moves one link's fractional key, like clips (M4). The UI moves a child
+  *after a visible sibling* (`moveChildAfter`) rather than to an index, since links to deleted
+  pieces stay in the doc and keep their places. Drag uses a handle; ↑/↓ buttons are the keyboard
+  path (always visible, as children are short rows). Removing a link never touches either piece.
+- **Effective practice** = own entries ∪ every live ancestor's own entries, found breadth-first up
+  the parent links with a visited set. Inherited entries carry `viaPiece` (the ancestor's id); the
+  existing `via` field already means "card or shuffle", so it wasn't reused. Deleted or merged-away
+  ancestors don't count; links through a merged piece follow its redirect. Practice only flows up
+  (a Set's history doesn't include its tunes'). Entries are computed per index build and memoized
+  per piece; the index is memoized per doc snapshot (`getIndex`).
+- **Inheritance:** a Part with no skill (or key) uses its earliest-created live parent Tune's own
+  value (ties by id). Only Part → Tune; Tunes never inherit from Sets. Setting a value gives the
+  Part its own; clearing it goes back to inheriting, so a Part can't be "explicitly unrated" under a
+  rated Tune. Filters, sort and cards use the effective values; the key list in the filter still
+  only offers keys pieces have themselves.
+- **Split** makes the child of the conventional kind with a clip on the **same Source** (never
+  copied), bounded by the region; the parent keeps its clip. The new clip copies the parent clip's
+  per-recording key but not its title. A region covering the whole file is stored as no trim. The
+  first region starts at the clip's own trim; each "Split another" starts where the last ended and
+  runs to the end. "No recording" (or a piece without playable recordings) adds a blank child.
+- **Merge undo uses a snapshot, not Automerge history.** `mergeWithUndo` takes plain copies of the
+  pieces and of every link touching them just before merging. `undoMerge` restores the losers'
+  `mergedInto`/`deletedAt`, the survivor's scalar fields (title, kind, description, key, first
+  notes, skill, favorite, external ids) and the old links (re-pointed copies removed), and removes
+  only the tags, clips and practice entries the losers brought in. Anything else changed after the
+  merge (a new practice entry, a new clip) survives the undo. Reverting through Automerge history
+  would also roll back concurrent edits from other devices and needs heads bookkeeping in the store,
+  so the snapshot is simpler and safer. The snapshot lives only in the Undo toast (not persisted).
+- **"Merge with…"** is on the card and detail overflow menus. It opens a picker (the piece itself
+  excluded), then the M3 merge dialog with the current piece preselected as the one to keep.
 
 **Still open**
 

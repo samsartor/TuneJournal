@@ -1,8 +1,11 @@
-<!-- Search the library and pick a piece: for attaching a shared recording (and M5's Add child). -->
+<!--
+	Search the library and pick a piece: for attaching a shared recording, Add child and "Merge
+	with…". With `oncreate` it also offers "New <kind>", titled with the search text.
+-->
 <script lang="ts">
 	import { compareText, matchesSearch } from '#lib/domain/derived.ts';
 	import { untitled } from '#lib/domain/format.ts';
-	import type { Piece } from '#lib/domain/types.ts';
+	import type { Piece, PieceId } from '#lib/domain/types.ts';
 	import { library } from '#lib/store/library.svelte.ts';
 	import KindBadge from './KindBadge.svelte';
 
@@ -10,12 +13,23 @@
 		onpick,
 		label = 'Find a piece',
 		actionLabel = 'Choose',
-		limit = 8
+		limit = 8,
+		exclude,
+		oncreate,
+		createLabel = 'New',
+		autofocus = false
 	}: {
 		onpick: (piece: Piece) => void;
 		label?: string;
 		actionLabel?: string;
 		limit?: number;
+		/** Pieces not to offer (the piece itself, ones already linked, …). */
+		exclude?: ReadonlySet<PieceId>;
+		/** Offers a "New …" button; gets the trimmed search text as the title. */
+		oncreate?: (title: string) => void;
+		/** "New Part", say; the search text is appended when there is some. */
+		createLabel?: string;
+		autofocus?: boolean;
 	} = $props();
 
 	const uid = $props.id();
@@ -25,7 +39,7 @@
 		const index = library.index;
 		if (!index || !query.trim()) return [];
 		return index.live
-			.filter((p) => matchesSearch(p, query))
+			.filter((p) => !exclude?.has(p.id) && matchesSearch(p, query))
 			.sort((a, b) => compareText(a.title ?? '', b.title ?? ''))
 			.slice(0, limit);
 	});
@@ -33,7 +47,15 @@
 
 <div class="picker">
 	<label for="{uid}-q">{label}</label>
-	<input id="{uid}-q" type="search" autocomplete="off" placeholder="Title" bind:value={query} />
+	<!-- svelte-ignore a11y_autofocus -->
+	<input
+		id="{uid}-q"
+		type="search"
+		autocomplete="off"
+		placeholder="Title"
+		{autofocus}
+		bind:value={query}
+	/>
 	{#if query.trim()}
 		{#if results.length === 0}
 			<p class="muted">Nothing matches.</p>
@@ -55,6 +77,11 @@
 				{/each}
 			</ul>
 		{/if}
+	{/if}
+	{#if oncreate}
+		<button type="button" class="btn-quiet create" onclick={() => oncreate(query.trim())}>
+			+ {createLabel}{query.trim() ? ` “${query.trim()}”` : ''}
+		</button>
 	{/if}
 </div>
 
@@ -92,5 +119,11 @@
 
 	p {
 		margin: 0;
+	}
+
+	.create {
+		justify-self: start;
+		overflow-wrap: anywhere;
+		text-align: left;
 	}
 </style>

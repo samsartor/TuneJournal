@@ -10,6 +10,7 @@
 	import KindBadge from './KindBadge.svelte';
 	import Menu from './Menu.svelte';
 	import Recordings from './Recordings.svelte';
+	import Related from './Related.svelte';
 	import SkillSlider from './SkillSlider.svelte';
 	import TheSessionInfo from './TheSessionInfo.svelte';
 	import { ui } from './state.svelte.ts';
@@ -24,8 +25,10 @@
 	const key = $derived(piece && index ? index.effectiveKey(piece) : undefined);
 	const tags = $derived(piece && index ? index.tagsOf(piece) : []);
 	const tuneId = $derived(piece?.external?.thesession?.tuneId);
-	const parents = $derived(piece && index ? index.parents(piece) : []);
-	const children = $derived(piece && index ? index.children(piece) : []);
+	// A Part with no skill or key of its own uses its Tune's (§5).
+	const tune = $derived(piece && index ? index.inheritsFrom(piece) : undefined);
+	const tuneName = $derived(tune ? (tune.title ?? untitled(tune.kind)) : '');
+	const keyInherited = $derived(!!piece && piece.key === undefined && key !== undefined);
 	// A piece merged into another redirects there (§6.4), following chains of merges.
 	$effect(() => {
 		if (!piece?.mergedInto || !index) return;
@@ -66,7 +69,10 @@
 				<button type="button" class="btn-quiet" onclick={() => ui.openEdit(id)}>Edit</button>
 				<Menu
 					label="More actions for {name}"
-					items={[{ label: 'Delete', run: remove, danger: true }]}
+					items={[
+						{ label: 'Merge with…', run: () => ui.openMergePicker(id) },
+						{ label: 'Delete', run: remove, danger: true }
+					]}
 				/>
 			</div>
 		{/if}
@@ -114,7 +120,14 @@
 			<dl class="facts">
 				<div>
 					<dt>Key</dt>
-					<dd>{key ? formatKey(key) : '—'}</dd>
+					<dd class:inherited={keyInherited} data-testid="key">
+						{key ? formatKey(key) : '—'}
+						{#if keyInherited && tune}
+							<span class="from"
+								>from <a href={resolve('/(main)/piece/[id]', { id: tune.id })}>{tuneName}</a></span
+							>
+						{/if}
+					</dd>
 				</div>
 				<div>
 					<dt>First notes</dt>
@@ -136,7 +149,12 @@
 		</div>
 
 		<section>
-			<SkillSlider skill={index?.effectiveSkill(piece)} onchange={setSkill} id="detail-skill" />
+			<SkillSlider
+				skill={piece.skill}
+				inherited={tune ? { skill: tune.skill, from: tuneName } : undefined}
+				onchange={setSkill}
+				id="detail-skill"
+			/>
 		</section>
 
 		<section>
@@ -165,46 +183,23 @@
 			{#key tuneId}<TheSessionInfo {tuneId} />{/key}
 		{/if}
 
-		<section aria-labelledby="related-heading">
-			<h2 id="related-heading">Related</h2>
-			{#if parents.length === 0 && children.length === 0}
-				<p class="muted">Not part of any set, and has no parts.</p>
-			{/if}
-			{#if parents.length > 0}
-				<h3 id="parents-heading">Part of</h3>
-				<ul class="related" aria-labelledby="parents-heading">
-					{#each parents as { piece: other } (other.id)}
-						<li>
-							<KindBadge kind={other.kind} />
-							<a href={resolve('/(main)/piece/[id]', { id: other.id })}
-								>{other.title ?? untitled(other.kind)}</a
-							>
-						</li>
-					{/each}
-				</ul>
-			{/if}
-			{#if children.length > 0}
-				<h3 id="children-heading">Contains</h3>
-				<ol class="related" aria-labelledby="children-heading">
-					{#each children as { piece: other } (other.id)}
-						<li>
-							<KindBadge kind={other.kind} />
-							<a href={resolve('/(main)/piece/[id]', { id: other.id })}
-								>{other.title ?? untitled(other.kind)}</a
-							>
-						</li>
-					{/each}
-				</ol>
-			{/if}
-		</section>
+		{#if !piece.deletedAt}<Related {piece} />{/if}
 
-		<section>
-			<h2>Practice history</h2>
+		<section aria-labelledby="history-heading">
+			<h2 id="history-heading">Practice history</h2>
 			{#if history.length > 0}
 				<ol class="history">
 					{#each history as entry, i (i)}
 						<li>
 							<time datetime={new Date(entry.at).toISOString()}>{dateFormat.format(entry.at)}</time>
+							{#if entry.viaPiece}
+								{@const via = index?.get(entry.viaPiece)}
+								<span class="via"
+									>via <a href={resolve('/(main)/piece/[id]', { id: entry.viaPiece })}
+										>{via ? (via.title ?? untitled(via.kind)) : 'another piece'}</a
+									></span
+								>
+							{/if}
 							<span class="muted">{relativeTime(entry.at, ui.now)}</span>
 						</li>
 					{/each}
@@ -348,29 +343,20 @@
 		list-style: none;
 	}
 
-	h3 {
-		margin: var(--space-2) 0 var(--space-1);
-		font-size: 1rem;
+	dd.inherited {
+		color: var(--color-muted);
+		font-weight: 500;
 	}
 
-	.related {
-		display: grid;
-		gap: var(--space-1);
-		margin: 0 0 var(--space-2);
-		padding: 0;
-		list-style: none;
+	.from {
+		font-size: 0.875rem;
+		font-style: italic;
 	}
 
-	.related a {
-		display: inline-flex;
-		align-items: center;
-		min-height: var(--touch);
-	}
-
-	.related li {
-		display: flex;
-		align-items: center;
-		gap: var(--space-2);
+	.via {
+		flex: 1;
+		color: var(--color-muted);
+		font-size: 0.9375rem;
 	}
 
 	.history {

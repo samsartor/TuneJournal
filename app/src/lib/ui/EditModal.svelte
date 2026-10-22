@@ -2,7 +2,8 @@
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { hasKey } from '#lib/domain/derived.ts';
-	import { KINDS, KIND_LABEL } from '#lib/domain/format.ts';
+	import { KINDS, KIND_LABEL, untitled } from '#lib/domain/format.ts';
+	import { formatKey } from '#lib/domain/key.ts';
 	import { addTag, removeTag, updatePiece, type PiecePatch } from '#lib/domain/ops.ts';
 	import { tuneUrl, unlinkTheSession } from '#lib/domain/thesession.ts';
 	import type { PieceId, PieceKind } from '#lib/domain/types.ts';
@@ -30,6 +31,9 @@
 	let searching = $state(false);
 
 	const thesession = $derived(piece?.external?.thesession);
+	// A Part inherits skill and key from its Tune until it has its own (§5).
+	const tune = $derived(piece && index ? index.inheritsFrom(piece) : undefined);
+	const tuneName = $derived(tune ? (tune.title ?? untitled(tune.kind)) : '');
 
 	/** Re-reads the text fields from the doc, after something other than typing changed them. */
 	function syncText() {
@@ -171,7 +175,12 @@
 					onremove={(tag) => onTag(removeTag, tag)}
 				/>
 
-				<SkillSlider id="edit-skill" skill={piece.skill} onchange={(skill) => save({ skill })} />
+				<SkillSlider
+					id="edit-skill"
+					skill={piece.skill}
+					inherited={tune ? { skill: tune.skill, from: tuneName } : undefined}
+					onchange={(skill) => save({ skill })}
+				/>
 
 				<label class="check">
 					<input
@@ -183,7 +192,21 @@
 				</label>
 
 				{#if hasKey(piece)}
-					<KeyInput id="edit-key" value={piece.key} onchange={(key) => save({ key })} />
+					<div class="field">
+						<KeyInput id="edit-key" value={piece.key} onchange={(key) => save({ key })} />
+						{#if tune?.key && piece.key === undefined}
+							<p class="muted inherit-note">
+								Uses {formatKey(tune.key)} from {tuneName} until you set one.
+							</p>
+						{:else if tune && piece.key !== undefined}
+							<button
+								type="button"
+								class="btn-quiet inherit-btn"
+								onclick={() => save({ key: null })}
+								>Use {tuneName}’s key{tune.key ? ` (${formatKey(tune.key)})` : ''}</button
+							>
+						{/if}
+					</div>
 
 					<div class="field">
 						<label for="edit-first-notes">First notes <span class="muted">(ABC)</span></label>
@@ -227,6 +250,16 @@
 </dialog>
 
 <style>
+	.inherit-note {
+		margin: 0;
+		font-size: 0.875rem;
+	}
+
+	.inherit-btn {
+		justify-self: start;
+		font-size: 0.875rem;
+	}
+
 	dialog {
 		width: 100%;
 		max-width: 100%;

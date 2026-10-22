@@ -10,8 +10,16 @@ import {
 	undoDelete,
 	unlogPractice
 } from '#lib/domain/ops.ts';
-import { mergePieces, type MergeOptions } from '#lib/domain/relations.ts';
-import type { PieceId } from '#lib/domain/types.ts';
+import {
+	addChild,
+	linkPieces,
+	mergeWithUndo,
+	removeLink,
+	restoreLink,
+	undoMerge,
+	type MergeOptions
+} from '#lib/domain/relations.ts';
+import type { PieceId, PieceKind } from '#lib/domain/types.ts';
 import { library } from '#lib/store/library.svelte.ts';
 
 export interface Toast {
@@ -26,6 +34,8 @@ class Ui {
 	editing = $state<{ id: PieceId; isNew: boolean }>();
 	/** Pieces in the open merge dialog, oldest first. */
 	merging = $state<PieceId[]>();
+	/** The piece "Merge with…" is picking a partner for. */
+	mergePicking = $state<PieceId>();
 	toast = $state<Toast>();
 	/** Epoch ms, refreshed every 30 s so relative times and date filters stay current. */
 	now = $state(Date.now());
@@ -67,14 +77,51 @@ class Ui {
 		this.merging = undefined;
 	}
 
-	/** Merges `losers` into `survivor` (§6.4), then shows the survivor. */
+	/** "Merge with…" (§6.4): pick the other piece, then confirm in the merge dialog. */
+	openMergePicker(id: PieceId) {
+		this.mergePicking = id;
+	}
+
+	closeMergePicker() {
+		this.mergePicking = undefined;
+	}
+
+	/** Merges `losers` into `survivor` (§6.4), then shows the survivor. Undo puts both back. */
 	async merge(survivor: PieceId, losers: PieceId[], fields?: MergeOptions['fields']) {
-		const id = library.change((d) => mergePieces(d, survivor, losers, { fields }));
+		const { id, undo } = library.change((d) => mergeWithUndo(d, survivor, losers, { fields }));
 		this.closeMerge();
 		this.now = Date.now();
 		const n = losers.length + 1;
-		this.showToast(`Merged ${n} pieces into ${this.#name(id)}`);
+		this.showToast(`Merged ${n} pieces into ${this.#name(id)}`, {
+			label: 'Undo',
+			run: () => library.change((d) => undoMerge(d, undo))
+		});
 		await goto(resolve('/(main)/piece/[id]', { id }));
+	}
+
+	/** Adds an existing piece as the parent's last child. */
+	addChild(parent: PieceId, child: PieceId) {
+		library.change((d) => linkPieces(d, parent, child));
+		this.showToast(`Added ${this.#name(child)}`);
+	}
+
+	/** Creates a new child (§6.4 "New …"), and opens Edit on it if it has no title yet. */
+	newChild(parent: PieceId, kind: PieceKind, title?: string) {
+		const id = library.change((d) => addChild(d, parent, { kind, title }));
+		this.now = Date.now();
+		if (title?.trim()) this.showToast(`Added ${this.#name(id)}`);
+		else this.openEdit(id, true);
+		return id;
+	}
+
+	/** Removes a link (never the piece), with undo. */
+	unlink(parent: PieceId, child: PieceId) {
+		const link = library.change((d) => removeLink(d, parent, child));
+		if (!link) return;
+		this.showToast(`Removed ${this.#name(child)} from ${this.#name(parent)}`, {
+			label: 'Undo',
+			run: () => library.change((d) => restoreLink(d, link))
+		});
 	}
 
 	/** §6.3: create a blank Tune right away, show it, and open Edit on it. */
