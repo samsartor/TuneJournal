@@ -4,7 +4,19 @@ import { defineEnvVars } from '@sveltejs/kit/env';
 // All optional: the integrations that need them show a setup hint when they're empty.
 const optional = (value: string | undefined) => value ?? '';
 
+const DEFAULT_SYNC_URL = 'wss://sync.automerge.org';
+
 export const variables = defineEnvVars({
+	PUBLIC_SYNC_URL: {
+		public: true,
+		static: true,
+		schema: (value) => {
+			const url = value?.trim() || DEFAULT_SYNC_URL;
+			if (!/^wss?:\/\//.test(url)) throw new Error('PUBLIC_SYNC_URL must be a ws:// or wss:// URL');
+			return url;
+		},
+		description: 'WebSocket URL of the automerge-repo sync relay. Defaults to the public relay.'
+	},
 	PUBLIC_GOOGLE_CLIENT_ID: {
 		public: true,
 		static: true,

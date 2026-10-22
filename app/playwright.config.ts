@@ -8,6 +8,9 @@ const executablePath =
 	(existsSync(SYSTEM_CHROMIUM) ? SYSTEM_CHROMIUM : undefined);
 
 const PORT = 4173;
+// A local sync relay (e2e/sync-server.ts), so tests never touch the public one.
+const SYNC_PORT = 3031;
+const SYNC_URL = `ws://localhost:${SYNC_PORT}`;
 
 export default defineConfig({
 	testDir: 'e2e',
@@ -28,11 +31,21 @@ export default defineConfig({
 		},
 		{ name: 'desktop', use: { viewport: { width: 1280, height: 800 } } }
 	],
-	webServer: {
-		// Test the production build, service worker included.
-		command: `npm run build && npm run preview -- --port ${PORT} --strictPort`,
-		port: PORT,
-		reuseExistingServer: false,
-		timeout: 180_000
-	}
+	webServer: [
+		{
+			command: 'node e2e/sync-server.ts',
+			env: { SYNC_PORT: String(SYNC_PORT) },
+			port: SYNC_PORT,
+			reuseExistingServer: false,
+			timeout: 30_000
+		},
+		{
+			// Test the production build, service worker included, pointed at the local relay.
+			command: `npm run build && npm run preview -- --port ${PORT} --strictPort`,
+			env: { PUBLIC_SYNC_URL: SYNC_URL },
+			port: PORT,
+			reuseExistingServer: false,
+			timeout: 180_000
+		}
+	]
 });

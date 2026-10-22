@@ -1,7 +1,10 @@
 import { expect, test } from '@playwright/test';
-import { addTune, backToList, card, cards, isMobile, open } from './helpers';
+import { RELAY, addTune, backToList, card, cards, isMobile, open } from './helpers';
 
 test.beforeEach(async ({ page }) => {
+	// These tests are about this device alone. Without the relay, nothing lost locally can come back
+	// from it, so the reload tests really check local persistence.
+	await page.routeWebSocket(RELAY, (ws) => ws.close());
 	await open(page);
 });
 
@@ -86,7 +89,6 @@ test('filters by tag, and remembers the filter', async ({ page }, info) => {
 	await expect(card(page, 'Drowsy Maggie')).toBeVisible();
 	await expect(page.getByText('1 of 2')).toBeVisible();
 
-	await page.waitForTimeout(500);
 	await page.reload();
 	await expect(cards(page)).toHaveCount(1);
 
@@ -125,8 +127,6 @@ test('delete with undo', async ({ page }, info) => {
 
 test('the library survives a reload', async ({ page }, info) => {
 	await addTune(page, info, { title: 'Banish Misfortune', tags: ['Jig'], key: 'Dmix' });
-	// Let automerge-repo flush to IndexedDB.
-	await page.waitForTimeout(500);
 	await page.reload();
 	const c = card(page, 'Banish Misfortune');
 	await expect(c).toBeVisible();
@@ -145,11 +145,28 @@ test('the library survives a reload', async ({ page }, info) => {
 test('works offline after the first load', async ({ page, context }, info) => {
 	await page.evaluate(() => navigator.serviceWorker.ready);
 	await addTune(page, info, { title: 'Offline Reel' });
-	await page.waitForTimeout(500);
 	await context.setOffline(true);
 	await page.reload();
 	await expect(card(page, 'Offline Reel')).toBeVisible();
 	await addTune(page, info, { title: 'Added offline' });
 	await expect(card(page, 'Added offline')).toBeVisible();
 	await context.setOffline(false);
+});
+
+test('a change made in the same moment as a reload survives it', async ({ page }, info) => {
+	await addTune(page, info, { title: 'The Butterfly' });
+	const c = card(page, 'The Butterfly');
+	await expect(c.getByTestId('last-practiced')).toHaveText('Never practiced');
+	// Click and reload in one task, so the IndexedDB write can't finish before the page goes.
+	await page.evaluate(() => {
+		const button = [...document.querySelectorAll('button')].find((b) =>
+			b.textContent?.includes('Practiced ✓')
+		);
+		button?.click();
+		location.reload();
+	});
+	await page.waitForEvent('load');
+	await expect(card(page, 'The Butterfly').getByTestId('last-practiced')).toHaveText(
+		'Last practiced just now'
+	);
 });

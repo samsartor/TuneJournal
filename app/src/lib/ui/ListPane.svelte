@@ -4,6 +4,7 @@
 	import { library } from '#lib/store/library.svelte.ts';
 	import FilterBar from './FilterBar.svelte';
 	import PieceCard from './PieceCard.svelte';
+	import SyncIndicator from './SyncIndicator.svelte';
 	import { ui } from './state.svelte.ts';
 
 	let { selectedId }: { selectedId?: string } = $props();
@@ -20,7 +21,10 @@
 <div class="list-pane">
 	<header class="top">
 		<h1>TuneJournal</h1>
-		<a class="icon-btn" href={resolve('/settings')} aria-label="Settings" title="Settings">⚙</a>
+		<div class="top-end">
+			<SyncIndicator />
+			<a class="icon-btn" href={resolve('/settings')} aria-label="Settings" title="Settings">⚙</a>
+		</div>
 	</header>
 
 	<div class="toolbar">
@@ -102,6 +106,12 @@
 		margin: 0;
 		font-size: 1.375rem;
 		letter-spacing: -0.01em;
+	}
+
+	.top-end {
+		display: flex;
+		align-items: center;
+		gap: var(--space-2);
 	}
 
 	.top .icon-btn {

@@ -636,8 +636,26 @@ M1 notes:
   system Chromium at `/usr/sbin/chromium` when it exists.
 
 **M2: Sync**
-- [ ] `BrowserWebSocketClientAdapter` to the public relay. Link-device QR screen.
-- [ ] Sync status indicator. Conflict-free behaviour tested with two browsers offline/online.
+- [x] `BrowserWebSocketClientAdapter` to the public relay. Link-device QR screen.
+- [x] Sync status indicator. Conflict-free behaviour tested with two browsers offline/online.
+
+M2 notes:
+- `/link-device` (linked from Settings) shows the library as a QR code of a deep link
+  (`<origin>/link-device#automerge:…`), with a copyable link and address. It also joins a pasted
+  or deep-linked library. Camera scanning uses `BarcodeDetector` only where it exists (Android
+  Chrome); elsewhere the phone's own camera opens the deep link. QR codes come from `uqr` and are
+  drawn as an SVG path.
+- Store: `store/link.ts` (parse and build deep links), `store/sync.svelte.ts` (status),
+  `store/journal.ts` (save-on-change and write-ahead copy), `findLibrary` and `RelayAdapter` in
+  `store/repo.ts`, and `library.switchTo` in `store/library.svelte.ts`.
+- The relay URL is `PUBLIC_SYNC_URL`, set at build time. It defaults to `wss://sync.automerge.org`.
+- E2E runs a local relay (`app/e2e/sync-server.ts`: a server-mode Repo with in-memory storage
+  behind `NodeWSServerAdapter`). Playwright starts it and builds the app against it. Tests cover:
+  two devices linking through the deep link, with edits flowing both ways; offline edits on both
+  sides converging without duplicate tags; joining with and without merging local pieces; join
+  errors (bad link, unknown library, offline); and the status states. The single-device tests
+  block the relay, so their reload checks really test local persistence. Note: after
+  `npm run test:e2e`, `build/` points at the local relay, so rebuild before deploying.
 
 **M3: thesession.org**
 - [ ] Title search → autofill (title, type tag, external ID, thesession source link, and key +
@@ -771,6 +789,40 @@ M1 notes:
 - **Filter panel** is collapsed by default on every width, with a one-line summary
   ("Tunes · Title ↑ · 2 filters"). Whether it's open is remembered per device in
   `localStorage`, not synced.
+
+**Decided during M2 (2026-10-22)**
+
+- **By default, linking replaces the library rather than merging.** Joining a library switches
+  which library this device opens. The old one stays in IndexedDB, and its URL is remembered in
+  `localStorage` (Settings → "Libraries this device showed before" → "Switch back"). If the
+  device's library has pieces, the confirm step warns and offers "Copy my N pieces into the linked
+  library". That uses the same merge as importing a backup: a CRDT merge if the two share
+  history, otherwise a copy by id. Copying can duplicate a tune that both devices added
+  separately; the M3/M5 merge tools handle that.
+- **The deep link carries the address in the hash**, so it never reaches a server log. Pinned
+  heads in a pasted URL are dropped, so devices follow the live library.
+- **Waiting for a joined library:** we wait up to 20 s for it to arrive from the relay. If the
+  relay says it doesn't have it, we wait 5 s more, since the other device may be uploading. Then
+  we explain why: this device is offline, the relay is unreachable, or the relay doesn't have the
+  library yet (open the app on the other device first). We use `findWithProgress`, not
+  `repo.find`, because `find` gives up as soon as the relay says "unavailable".
+- **Sync status** has three states, shown next to the Settings button and in Settings:
+  - *Offline*: `navigator.onLine` is false, or the last connection attempt failed and none has
+    succeeded since. The second rule avoids flicker during the adapter's 5 s retries.
+  - *Connecting…*
+  - *Synced*: the relay is a connected peer. While connected, we compare the relay's heads for
+    our doc (from `handle.on('remote-heads')`, keyed by its storage id) with ours. If they differ
+    for over 1.5 s, the label reads "Syncing…". "Last synced" is when they last matched.
+- **Offline handling:** on the browser's `offline` event we close the relay socket. On `online`
+  we reconnect at once, instead of waiting for the adapter's retry timer.
+- **Every local change is saved straight away.** M1's data-loss window came from automerge-repo's
+  ~100 ms save throttle: the IndexedDB write hadn't started when the page unloaded, and the
+  `pagehide` flush didn't save it. Now each change calls `repo.flush([libraryId])` immediately,
+  and the e2e tests no longer wait 500 ms before reloading. A click-and-reload in the same task
+  fails under the old behaviour and passes now. As a safety net for crashes, or for browsers that
+  drop in-flight writes, the changes since the last confirmed save are also kept in
+  `localStorage` until the flush completes, and replayed on the next load. Chromium didn't need
+  this net in testing.
 
 **Still open**
 

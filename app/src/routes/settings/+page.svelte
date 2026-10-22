@@ -1,7 +1,10 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { resolve } from '$app/paths';
+	import type { ResolvedPathname } from '$app/types';
 	import { library, type ImportResult } from '#lib/store/library.svelte.ts';
+	import { previousLibraryUrls } from '#lib/store/repo.ts';
+	import SyncIndicator from '#lib/ui/SyncIndicator.svelte';
 
 	let usage = $state<{ used: number; quota: number }>();
 	let persisted = $state<boolean>();
@@ -14,6 +17,10 @@
 	let fileInput: HTMLInputElement;
 
 	const pieceCount = $derived(library.index?.live.length ?? 0);
+	// The link-device page, with the old library in the hash as if from a scanned QR code.
+	const switchBackHref = (url: string) => `${resolve('/link-device')}#${url}` as ResolvedPathname;
+	// Re-read when the active library changes, i.e. after linking to another one.
+	const previous = $derived(library.url ? previousLibraryUrls() : []);
 
 	async function refreshStorage() {
 		const storage = navigator.storage;
@@ -114,9 +121,31 @@
 				This address opens your library on another device. Anyone who has it can read and change
 				your library, so keep it private.
 			</p>
+			<p><a class="btn-link" href={resolve('/link-device')}>Link a device</a></p>
 		{:else}
 			<p class="muted">Loading library…</p>
 		{/if}
+		{#if previous.length > 0}
+			<details class="previous">
+				<summary>Libraries this device showed before</summary>
+				<p class="muted small">
+					They’re still saved on this device. Switching back works like linking to them.
+				</p>
+				<ul>
+					{#each previous as url (url)}
+						<li>
+							<code>{url}</code>
+							<a href={switchBackHref(url)}>Switch back</a>
+						</li>
+					{/each}
+				</ul>
+			</details>
+		{/if}
+	</section>
+
+	<section>
+		<h2>Sync</h2>
+		<SyncIndicator verbose />
 	</section>
 
 	<section>
@@ -253,6 +282,43 @@
 		background: var(--color-surface);
 		border: 1px solid var(--color-border);
 		border-radius: calc(var(--radius) * 0.75);
+	}
+
+	.btn-link {
+		display: inline-grid;
+		place-items: center;
+		min-height: var(--touch);
+		padding: 0 var(--space-3);
+		border-radius: var(--radius);
+		background: var(--color-accent);
+		color: var(--color-on-accent);
+		text-decoration: none;
+	}
+
+	.previous summary {
+		min-height: var(--touch);
+		display: flex;
+		align-items: center;
+		cursor: pointer;
+	}
+
+	.previous ul {
+		display: grid;
+		gap: var(--space-2);
+		margin: 0;
+		padding: 0;
+		list-style: none;
+	}
+
+	.previous li {
+		display: flex;
+		align-items: center;
+		gap: var(--space-2);
+	}
+
+	.previous code {
+		flex: 1;
+		min-width: 0;
 	}
 
 	.buttons {
