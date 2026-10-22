@@ -76,9 +76,9 @@ Three separate kinds of local data, on purpose:
 |---|---|---|
 | Language | TypeScript (strict) | |
 | UI | Svelte 5 (runes) | |
-| App framework | SvelteKit + `adapter-static` (SPA fallback, `ssr = false`) | Gives routing and builds to plain static files. Plain Vite + Svelte + a small router also works if we'd rather avoid Kit. |
-| PWA | `@vite-pwa/sveltekit` (Workbox) | Precached app shell. Prompt "New version available — reload" rather than a silent reload mid-practice. |
-| User state | **Automerge** + `@automerge/automerge-repo` | See §4. Needs `vite-plugin-wasm` + `vite-plugin-top-level-await`. |
+| App framework | SvelteKit 3 + `adapter-static` (SPA fallback, `ssr = false`) | Gives routing and builds to plain static files. Kit 3 has no `svelte.config.js`: its config is passed to `sveltekit({...})` in `vite.config.ts`. `$lib` is now `#lib` (package.json subpath imports). |
+| PWA | SvelteKit's native service worker (`src/service-worker/`) + a static `manifest.webmanifest` | Precached app shell and WASM. Prompt "Update available — reload" rather than a silent reload mid-practice. `@vite-pwa/sveltekit` was rejected: its peer deps only allow Kit 1–2. |
+| User state | **Automerge** 3 + `@automerge/automerge-repo` **~2.5.x** | See §4. Needs `vite-plugin-wasm` and `build.target: 'esnext'` (for top-level await). The repo packages are pinned to 2.5.x because npm's `latest` tag points at a 2.6 alpha. |
 | Local storage | `automerge-repo-storage-indexeddb`, OPFS for audio, `idb-keyval` for caches | |
 | Styling | Plain CSS with custom properties, or Tailwind | No component library. Mobile-first. |
 | Audio UI | `<audio>` + wavesurfer.js (regions plugin) for trimming | YouTube uses the IFrame Player API behind the same player interface. |
@@ -87,6 +87,16 @@ Three separate kinds of local data, on purpose:
 | Backend (later) | Hono on Node in Docker on the VPS | Hono also runs on Workers/Deno/Bun, so the light endpoints stay portable. Heavy ones (yt-dlp, headless Chrome) need a real server anyway. |
 | Asset storage (later) | Any S3-compatible API (MinIO/Garage on VPS, R2, B2) | Abstracts over the vendor. |
 | Static hosting | Cloudflare Pages *or* anything else | Use nothing Pages-specific beyond `_headers`/`_redirects`, which most static hosts support too. |
+
+Notes on the SvelteKit 3 setup:
+- Service-worker modules are `$app/service-worker` (`self`), `$app/manifest` (`immutable`,
+  `assets`, `prerendered`) and `$app/env`. There is no `$service-worker` module.
+- `version` from `$app/env` is `undefined` inside the service worker (Kit 3.1), so
+  `vite.config.ts` defines `__BUILD_ID__` for the cache name instead.
+- The service worker is registered automatically by Kit. It never calls `skipWaiting()` on
+  its own; `src/lib/pwa/update.svelte.ts` posts `SKIP_WAITING` when the user accepts the toast.
+- `vite preview` doesn't do the SPA fallback for deep links; the static host must serve
+  `index.html` for unknown paths.
 
 ---
 
@@ -495,12 +505,15 @@ When it arrives, it's a single small service on the VPS, deployed with Docker Co
 /
 ├─ PLAN.md
 ├─ app/                      SvelteKit PWA
-│  ├─ src/lib/domain/        pure TS: types, ops (create/edit/merge/split/link), shuffle, indexes
-│  ├─ src/lib/store/         Automerge repo setup, Svelte bindings, migrations, export/import
+│  ├─ src/lib/domain/        pure TS: types, ops (create/edit/merge/split/link), shuffle, indexes, migrations
+│  ├─ src/lib/store/         Automerge repo setup, Svelte bindings, export/import
+│  ├─ src/lib/pwa/           service-worker update prompt
 │  ├─ src/lib/integrations/  thesession, gdrive, youtube, spotify, sharetarget, ...
 │  ├─ src/lib/audio/         PlayerAdapter impls, OPFS cache, trim editor
 │  ├─ src/lib/ui/            components (PieceCard, TagInput, SkillSlider, Fab, Modal, ...)
-│  └─ src/routes/            / (list), /piece/[id], /shuffle, /settings, /link-device
+│  ├─ src/routes/            / (list), /piece/[id], /shuffle, /settings, /link-device
+│  ├─ src/service-worker/    precache + cache-first app shell (own tsconfig)
+│  └─ static/                manifest.webmanifest, icons/
 ├─ server/                   (later) Hono backend + Dockerfile + compose
 └─ spikes/                   throwaway experiments
 ```
