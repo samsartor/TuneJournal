@@ -91,7 +91,8 @@
 			unratedOnly: undefined,
 			key: undefined,
 			favoritesOnly: undefined,
-			practiced: undefined
+			practiced: undefined,
+			recordings: undefined
 		});
 	}
 </script>
@@ -257,6 +258,22 @@
 					/>
 					<span>days</span>
 				{/if}
+			</div>
+
+			<div class="row">
+				<label for="recordings-filter">Recordings</label>
+				<select
+					id="recordings-filter"
+					value={settings.recordings ?? ''}
+					onchange={(e) =>
+						set({
+							recordings: (e.currentTarget.value || undefined) as ListSettings['recordings']
+						})}
+				>
+					<option value="">With or without</option>
+					<option value="has">Has recordings</option>
+					<option value="lacks">No recordings</option>
+				</select>
 			</div>
 
 			{#if filterCount > 0}

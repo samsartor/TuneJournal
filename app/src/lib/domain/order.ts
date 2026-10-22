@@ -24,3 +24,13 @@ export function orderAfter(keys: Iterable<string>): string {
 export function ordersAfter(keys: Iterable<string>, n: number): string[] {
 	return generateNKeysBetween(last(keys), null, n);
 }
+
+/**
+ * A key between `lower` and `upper` (either may be null for an open end). Concurrent edits can
+ * leave two items with the same key, so callers should pass the next key strictly greater than
+ * `lower` as `upper`; if they don't, the key just goes after `lower` rather than throwing.
+ */
+export function orderBetween(lower: string | null, upper: string | null): string {
+	if (lower !== null && upper !== null && lower >= upper) upper = null;
+	return generateKeyBetween(lower, upper);
+}

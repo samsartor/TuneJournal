@@ -7,7 +7,9 @@
 	import type { Piece } from '#lib/domain/types.ts';
 	import { library } from '#lib/store/library.svelte.ts';
 	import KindBadge from './KindBadge.svelte';
+	import { PROVIDERS } from '#lib/domain/providers.ts';
 	import Menu from './Menu.svelte';
+	import ProviderIcon from './ProviderIcon.svelte';
 	import SkillDots from './SkillDots.svelte';
 	import { ui } from './state.svelte.ts';
 
@@ -22,6 +24,7 @@
 	const stats = $derived(index.stats(piece));
 	const key = $derived(index.effectiveKey(piece));
 	const tags = $derived(index.tagsOf(piece));
+	const providers = $derived(index.providersOf(piece));
 
 	function toggleFavorite() {
 		library.change((d) => updatePiece(d, piece.id, { favorite: !piece.favorite }));
@@ -55,6 +58,15 @@
 				? 'Never practiced'
 				: `Last practiced ${relativeTime(stats.lastPracticed, now)}`}
 		</span>
+		{#if providers.length > 0}
+			<span
+				class="providers"
+				role="img"
+				aria-label="Recordings: {providers.map((p) => PROVIDERS[p].label).join(', ')}"
+			>
+				{#each providers as provider (provider)}<ProviderIcon {provider} label={false} />{/each}
+			</span>
+		{/if}
 	</div>
 
 	{#if tags.length > 0}
@@ -158,6 +170,11 @@
 		gap: var(--space-1) var(--space-3);
 		color: var(--color-muted);
 		font-size: 0.9375rem;
+	}
+
+	.providers {
+		display: inline-flex;
+		gap: 0.2rem;
 	}
 
 	.key {

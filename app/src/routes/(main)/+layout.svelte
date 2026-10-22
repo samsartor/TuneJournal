@@ -36,7 +36,8 @@
 		.shell {
 			display: grid;
 			grid-template-columns: minmax(22rem, 28rem) 1fr;
-			height: 100dvh;
+			/* The player bar sits below, outside the two scrolling panes. */
+			height: calc(100dvh - var(--player-h));
 		}
 
 		.list,

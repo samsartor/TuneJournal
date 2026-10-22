@@ -31,7 +31,7 @@ test('search fills title, type tag, link, key and first notes from a setting', a
 
 	// The detail view shows the link and what thesession.org knows about the tune.
 	const detail = page.locator('.detail');
-	await expect(detail.getByRole('link', { name: 'thesession.org ↗' }).first()).toHaveAttribute(
+	await expect(detail.getByRole('link', { name: 'Open thesession.org (new tab)' })).toHaveAttribute(
 		'href',
 		'https://thesession.org/tunes/1'
 	);

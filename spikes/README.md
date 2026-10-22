@@ -2,9 +2,11 @@
 
 The spike pages live inside the app, under `/spike` (`app/src/routes/spike/`, helpers in
 `app/src/lib/spike/`). They're there rather than in this folder because the Web Share Target needs
-the app's manifest and service worker. Delete both folders, the `share_target` block in
-`app/static/manifest.webmanifest` and the share-target import and `if` block in
-`app/src/service-worker/index.ts` once M4 replaces them.
+the app's manifest and service worker. M4 moved the share target into the app proper
+(`app/src/lib/integrations/share-target.ts`, landing on `/shared`), and `/spike/share` now just
+forwards there. The other spike pages still work and can be deleted once the manual tests below
+are done; keep the `share_target` block in the manifest and the service worker's share-target
+`if` block, which are production code now.
 
 Results so far are recorded in `PLAN.md` §7. This file covers the parts that need you: Google
 credentials, an Android phone, and your ears.
@@ -76,6 +78,22 @@ Steps (console.cloud.google.com; Google moved OAuth settings under **Google Auth
    now exists and contains the file. Run it twice to confirm the folder is reused, not duplicated.
 5. Optional: open `/spike/speed`. The Drive file is listed under "From OPFS".
 
+### Test the app's Drive flows (M4)
+
+The spike page tests the raw API calls; these test what M4 built on them. With the same `.env`:
+
+1. **Settings → Google Drive → Connect Google Drive.** It should show "Connected on this device".
+2. On a tune with no recordings, **Google Drive** in the import panel opens the Picker. Pick an
+   audio file: a clip appears, shows "Downloading…" briefly, then plays from the cache.
+3. **Upload a file** on another tune. With Drive connected it's backed up in the background (no
+   "Not backed up" badge after a moment, and a file in `TuneJournal/` in Drive). Disconnect, upload
+   again, and check the badge appears; then reconnect and use the clip's ⋯ → **Back up to Drive**.
+4. On a **second device** linked to the same library (Settings → Link a device), with Drive
+   connected there too, play both clips. They should download from Drive on first play, then play
+   offline once **Keep offline** (⤓) is on.
+5. Wait for the token to expire (about an hour, or clear `sessionStorage`) and play an uncached
+   Drive clip: it should ask Google for a new token, usually without the consent screen.
+
 Record the outcome, or paste the log, in PLAN.md §7. Things worth noting:
 - whether the popup was blocked (it has to come from a click, which it does here)
 - how a second sign-in behaves after the token expires: is it silent or a full prompt?
@@ -84,7 +102,7 @@ Record the outcome, or paste the log, in PLAN.md §7. Things worth noting:
 
 ---
 
-## 2. Web Share Target from Pixel Recorder (`/spike/share`)
+## 2. Web Share Target from Pixel Recorder (`/shared`)
 
 Needs Android Chrome, an **installed** PWA, and an **HTTPS** origin (localhost over USB doesn't
 count for installation).
@@ -115,24 +133,29 @@ for Funnel add `__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS=.ts.net` as well.
 
 ### Test
 
-1. On the phone, open `https://…/spike/share` in Chrome. Menu → **Install app** (or *Add to
-   Home screen → Install*). It must be a real install (WebAPK), not a shortcut. The page's JSON
-   shows `"standalone": true` once it's launched from the home screen icon.
+1. On the phone, open `https://…/` in Chrome. Menu → **Install app** (or *Add to
+   Home screen → Install*). It must be a real install (WebAPK), not a shortcut: launched from the
+   home screen icon, it opens without Chrome's address bar.
 2. Open **Pixel Recorder** → a recording → **Share** → choose **Audio** (the m4a), not *Link* or
    *Transcript* → pick **TuneJournal** in the share sheet.
    - If TuneJournal isn't in the sheet, the WebAPK may predate the `share_target` entry.
      Uninstall and reinstall the app.
-3. The app should open at `/spike/share?received=1&backend=opfs` with the file listed and
-   playable. Also try sharing a **Link** from Recorder. That arrives as a `…-meta.txt` entry
-   holding the title, text and URL. It's useful to know what Recorder sends.
-4. Turn on airplane mode, reopen the app and check the shared file still plays from OPFS.
-5. Record the result in PLAN.md §7: the `backend` value, file name and type (`audio/mp4`?
+3. The app should open on **Shared recording** (`/shared?received=1`) with the file listed and
+   playable. Attach it to a tune (search) or **New tune**; it should then play from the tune's
+   recordings, marked "Not backed up" unless Drive is connected. Also try sharing a **Link** from
+   Recorder (or a YouTube video from the YouTube app): it's listed with the detected provider and
+   attaches the same way. Note what Recorder puts in the title and text.
+4. Turn on airplane mode, reopen the app and check the shared file still plays offline.
+5. Record the result in PLAN.md §7: the file name and type the page shows (`audio/mp4`?
    `audio/x-m4a`?), and the size.
 
-Already verified on desktop Chromium (headless): a multipart POST navigation to
-`/spike/share-target` is caught by the service worker, the file is stored in OPFS, the page is
-redirected (303) to `/spike/share` and the file plays. The Android share sheet itself is the
-untested part.
+An app installed before M4 has the spike's `spike/share-target` action in its WebAPK; that's
+still accepted, but reinstall to pick up the new one.
+
+Already verified on desktop Chromium (headless, and in `app/e2e/recordings.test.ts`): a multipart
+POST navigation to `/share-target` is caught by the service worker, the file is stored in the audio
+cache, the page is redirected (303) to `/shared`, and attaching and playing it work. The Android
+share sheet itself is the untested part.
 
 ---
 

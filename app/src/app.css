@@ -18,6 +18,17 @@
 	--space-4: 1.5rem;
 	--radius: 0.75rem;
 	--touch: 44px;
+	/* Height of the mini-player bar when it's showing; set by PlayerBar. */
+	--player-h: 0px;
+	/* Provider accents (§6.7). */
+	--provider-upload: #5b6b8c;
+	--provider-gdrive: #1a73e8;
+	--provider-grecorder: #c5221f;
+	--provider-youtube: #c4302b;
+	--provider-spotify: #1a8f47;
+	--provider-thesession: #8a5a2b;
+	--provider-folkfriend: #6a4c9c;
+	--provider-url: #5f6b66;
 	color-scheme: light dark;
 }
 
@@ -34,6 +45,14 @@
 		--color-star: #e7b24a;
 		--color-danger: #e0786d;
 		--shadow: 0 1px 2px rgb(0 0 0 / 0.3), 0 4px 16px rgb(0 0 0 / 0.35);
+		--provider-upload: #9fb0d4;
+		--provider-gdrive: #8ab4f8;
+		--provider-grecorder: #f28b82;
+		--provider-youtube: #ff7a70;
+		--provider-spotify: #5fd38d;
+		--provider-thesession: #d9a86c;
+		--provider-folkfriend: #b79be6;
+		--provider-url: #9aa5a0;
 	}
 }
 
@@ -50,6 +69,8 @@ html {
 body {
 	margin: 0;
 	min-height: 100dvh;
+	/* Room for the fixed player bar, so it never covers the end of a page. */
+	padding-bottom: var(--player-h);
 	background: var(--color-bg);
 	color: var(--color-text);
 	font-family: var(--font-sans);

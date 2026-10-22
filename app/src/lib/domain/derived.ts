@@ -5,8 +5,11 @@
 // there without touching the callers.
 
 import { tagKey } from './ops.ts';
+import { PROVIDERS } from './providers.ts';
+import { sortedClips } from './recordings.ts';
 import { resolvePiece, sortLinks } from './relations.ts';
 import type {
+	Clip,
 	Library,
 	Link,
 	ListSettings,
@@ -14,7 +17,9 @@ import type {
 	PieceId,
 	PracticeEntry,
 	Skill,
+	Provider,
 	SortField,
+	Source,
 	Timestamp
 } from './types.ts';
 
@@ -42,6 +47,16 @@ export interface LibraryIndex {
 	effectivePractice(piece: Piece): PracticeEntry[];
 	effectiveSkill(piece: Piece): Skill | undefined;
 	effectiveKey(piece: Piece): string | undefined;
+	/** The piece's clips in order, each with its source (clips whose source is missing are left out). */
+	clipsOf(piece: Piece): ClipWithSource[];
+	/** Has a clip of an actual recording, not just a reference link such as thesession.org. */
+	hasRecordings(piece: Piece): boolean;
+	/** Distinct providers of the piece's clips, in clip order, for card icons. */
+	providersOf(piece: Piece): Provider[];
+	/** Key as played in a clip: its own override, else the piece's effective key (§5). */
+	clipKey(piece: Piece, clip: Clip): string | undefined;
+	/** First notes as played in a clip: its own override, else the piece's. */
+	clipFirstNotes(piece: Piece, clip: Clip): string | undefined;
 	/** The piece's tags, one spelling per tag, sorted. */
 	tagsOf(piece: Piece): string[];
 	/** The piece an id refers to now, following merge redirects. */
@@ -54,6 +69,11 @@ export interface LibraryIndex {
 	withTune(tuneId: number): Piece[];
 	/** Groups of two or more live pieces that share a thesession tune id, oldest group first. */
 	readonly duplicateTunes: DuplicateGroup[];
+}
+
+export interface ClipWithSource {
+	clip: Clip;
+	source: Source;
 }
 
 export interface Related {
@@ -69,6 +89,11 @@ export interface DuplicateGroup {
 
 export function isLive(piece: Piece): boolean {
 	return piece.deletedAt === undefined && piece.mergedInto === undefined;
+}
+
+/** A recording to listen to, as opposed to a reference link (thesession, FolkFriend). */
+export function isRecording(source: Pick<Source, 'provider'>): boolean {
+	return PROVIDERS[source.provider]?.recording ?? false;
 }
 
 /** Key and first notes only apply to tunes and parts. */
@@ -105,6 +130,21 @@ export function buildIndex(library: Library): LibraryIndex {
 		.filter(([, pieces]) => pieces.length > 1)
 		.map(([tuneId, pieces]) => ({ tuneId, pieces }))
 		.sort((a, b) => byAge(a.pieces[0], b.pieces[0]));
+
+	const clipsCache = new Map<PieceId, ClipWithSource[]>();
+	const clipsOf = (piece: Piece) => {
+		let clips = clipsCache.get(piece.id);
+		if (!clips) {
+			clips = [];
+			for (const clip of sortedClips(piece)) {
+				const source = library.sources[clip.sourceId];
+				if (source) clips.push({ clip, source });
+			}
+			clipsCache.set(piece.id, clips);
+		}
+		return clips;
+	};
+	const effectiveKey = (piece: Piece) => (hasKey(piece) ? piece.key : undefined);
 
 	const effectivePractice = (piece: Piece) => {
 		let entries = practiceCache.get(piece.id);
@@ -157,7 +197,13 @@ export function buildIndex(library: Library): LibraryIndex {
 			return stats;
 		},
 		effectiveSkill: (piece) => piece.skill,
-		effectiveKey: (piece) => (hasKey(piece) ? piece.key : undefined),
+		effectiveKey,
+		clipsOf,
+		hasRecordings: (piece) => clipsOf(piece).some(({ source }) => isRecording(source)),
+		providersOf: (piece) => [...new Set(clipsOf(piece).map(({ source }) => source.provider))],
+		clipKey: (piece, clip) => (hasKey(piece) ? (clip.key ?? effectiveKey(piece)) : undefined),
+		clipFirstNotes: (piece, clip) =>
+			hasKey(piece) ? (clip.firstNotes ?? piece.firstNotes) : undefined,
 		tagsOf,
 		resolve: (id) => resolvePiece(library, id),
 		children: (piece) => relations().children.get(piece.id) ?? [],
@@ -273,6 +319,10 @@ export function matchesFilter(
 
 	if (filter.key !== undefined && index.effectiveKey(piece) !== filter.key) return false;
 
+	if (filter.recordings && index.hasRecordings(piece) !== (filter.recordings === 'has')) {
+		return false;
+	}
+
 	if (filter.practiced) {
 		const last = index.stats(piece).lastPracticed;
 		const recent = last !== undefined && now - last <= filter.practiced.days * DAY;
@@ -290,6 +340,7 @@ export function activeFilterCount(filter: ListSettings): number {
 	if (filter.skillMin !== undefined || filter.skillMax !== undefined || filter.unratedOnly) n++;
 	if (filter.key !== undefined) n++;
 	if (filter.practiced) n++;
+	if (filter.recordings) n++;
 	return n;
 }
 

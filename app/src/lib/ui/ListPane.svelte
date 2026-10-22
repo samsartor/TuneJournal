@@ -222,7 +222,8 @@
 	.fabs {
 		position: fixed;
 		left: calc(var(--space-3) + env(safe-area-inset-left));
-		bottom: calc(var(--space-3) + env(safe-area-inset-bottom));
+		/* Above the player bar when one is showing, so they never overlap. */
+		bottom: calc(var(--space-3) + env(safe-area-inset-bottom) + var(--player-h));
 		z-index: 10;
 		display: flex;
 		align-items: center;

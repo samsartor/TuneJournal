@@ -4,8 +4,9 @@ A local-first PWA for tracking folk tunes: what I can play, what I want to learn
 heard or recorded them. Part todo list, part spaced-repetition deck, part file store, part music
 player.
 
-> Status: M0 (spikes), M1 (skeleton and core list), M2 (sync) and M3 (thesession.org) are built;
-> nothing is deployed yet. Sections
+> Status: M0 (spikes), M1 (skeleton and core list), M2 (sync), M3 (thesession.org) and M4
+> (recordings and player) are built; nothing is deployed yet. Google Drive is pending a manual
+> test with real credentials. Sections
 > marked **(decision)** are proposals to confirm; see
 > [Decisions and open questions](#14-decisions-and-open-questions) at the end.
 
@@ -442,7 +443,7 @@ Results of the M0 spike (2026-10-22, see §7.1 for evidence) and the planned app
 |---|---|---|---|
 | **thesession.org** | ✅ **confirmed**. All four endpoints send `ACAO: *` and were fetched from a page in headless Chromium | Client: `src/lib/integrations/thesession.ts` (fixtures + tests). Search `/tunes/search?q=` (honours `perpage`, results carry no aliases or settings). Details `/tunes/{id}` (type, aliases, `recordings` count, settings with `key` such as `Edorian` plus the ABC body). `/tunes/{id}/sets` is paged at a fixed 10 and ignores `perpage`; its entries are *settings*, so the tune id has to be parsed from the URL, and keys there are abbreviated (`Edor`). `/tunes/{id}/recordings` returns everything (197 for Cooley's) plus `recorded_with` counts. Cache in IndexedDB with a TTL, debounce search, throttle. | Nothing |
 | **Google Drive** | ✅ CORS **confirmed** (the preflight for `files/{id}?alt=media` and for multipart upload allows `authorization` and reflects the origin). End-to-end is **pending manual test** (needs credentials) | Google Identity Services token client + Picker API, `drive.file` scope. That scope is non-sensitive, so the app needs no Google verification and sees only files the user picks or the app creates. Download with `files.get?alt=media` + bearer token → blob → OPFS cache. Upload with multipart into an app-created `TuneJournal/` folder. Spike: `/spike/drive`; setup steps in `spikes/README.md`. Config comes from `PUBLIC_GOOGLE_{CLIENT_ID,API_KEY,APP_ID}`. | Nothing. Tokens are short-lived, so a re-auth prompt is acceptable. |
-| **Pixel Recorder** | ❌ API. ✅ the Share Target path works end-to-end in desktop Chromium; the Android share sheet is **pending manual test** | The only API is the unofficial cookie-based web API used by `google-recorder-cli`, which needs headless Chrome to refresh cookies. That's fragile and server-only. **v1 path:** the Recorder app's *Share* button sends the audio file to our PWA through the **Web Share Target API** (Android, installed PWA). Alternatively, the user saves to Drive and picks it there. The manifest `share_target` POSTs multipart to `/spike/share-target`. The service worker stores the files in OPFS (falling back to IndexedDB where `createWritable` is missing in the SW) and 303-redirects to `/spike/share`. Text and URL shares are kept too. | Optional later: a proxy using `google-recorder-cli` on the VPS for browsing and bulk import |
+| **Pixel Recorder** | ❌ API. ✅ the Share Target path works end-to-end in desktop Chromium; the Android share sheet is **pending manual test** | The only API is the unofficial cookie-based web API used by `google-recorder-cli`, which needs headless Chrome to refresh cookies. That's fragile and server-only. **v1 path:** the Recorder app's *Share* button sends the audio file to our PWA through the **Web Share Target API** (Android, installed PWA). Alternatively, the user saves to Drive and picks it there. The manifest `share_target` POSTs multipart to `/share-target` (M0's spike used `/spike/share-target`, which is still accepted). The service worker stores the files in the audio cache (OPFS, falling back to IndexedDB where `createWritable` is missing in the SW) with an inbox entry, and 303-redirects to the "Shared recording" page `/shared`. Text and URL shares are kept too. | Optional later: a proxy using `google-recorder-cli` on the VPS for browsing and bulk import |
 | **YouTube** | ✅ **confirmed** for playback and oEmbed | IFrame player with clip start/end, our own loop (seek back to `start` on `end`), and `setPlaybackRate` with any 0.05 step (measured: 0.85 requested → media clock 0.87×). `youtube.com/oembed?format=json` reflects the request `Origin` in `ACAO`, so it works from the browser. noembed.com (`ACAO: *`) is the fallback. No offline playback. | `yt-dlp` → audio file → asset storage, for offline use and waveform trimming |
 | **Spotify** | Link only. oEmbed ✅ **confirmed** (`ACAO: *`) | Open the URL. Title and thumbnail come from `open.spotify.com/oembed?url=` (also `iframe_url` for an optional embed). noembed doesn't support Spotify. Full playback would need Premium and the Web Playback SDK, so it's out of scope. | — |
 | **folkfriend.app** | Link to the app only. Nothing to query | A Vue SPA. Search and tune data run in a local web worker (an offline index of thesession data), with no public API. Its tune IDs *are* thesession tune and setting IDs, and its tune page links to `thesession.org/tunes/{id}`. But `/tune` gets its `tuneID` as in-memory router params, so `folkfriend.app/tune?…` URLs aren't deep-linkable, and a reload shows "No tune loaded". Treat it as a plain link to `https://folkfriend.app/` with custom decoration. `external.thesession` already holds the identity, so `external.folkfriend` can be dropped. | — |
@@ -616,7 +617,7 @@ against plain objects.
 - [x] Tags with suggest/create input
 - [x] Favorite ★, skill slider (unrated by default), key + first notes fields (tunes/parts only)
 - [x] Practiced button + log, "last practiced" display
-- [x] Search, filter, and sort bar (the has/lacks recordings filter waits for M4)
+- [x] Search, filter, and sort bar (the has/lacks recordings filter arrived in M4)
 - [x] Responsive layout: full-screen detail on mobile, list + right-hand detail pane on desktop
 - [x] Export/import
 
@@ -686,14 +687,52 @@ M3 notes:
   promotion, alias search across a reload, and offline display from the cache plus clearing it.
 
 **M4: Recordings and player**
-- [ ] Source/Clip model, recordings section, provider decorations, empty-state import panel
-- [ ] Global player bar with HtmlAudio + YouTube + LinkOut adapters, loop, and speed (presets
+- [x] Source/Clip model, recordings section, provider decorations, empty-state import panel
+- [x] Global player bar with HtmlAudio + YouTube + LinkOut adapters, loop, and speed (presets
       and ±5% steps)
-- [ ] Per-clip key and first-notes overrides
-- [ ] Google Drive picker + download + OPFS cache + "keep offline"
-- [ ] Upload → OPFS → Drive `TuneJournal/` folder
-- [ ] Web Share Target (Recorder → app)
-- [ ] Trim editor (wavesurfer regions; slider fallback for YouTube); reorder clips
+- [x] Per-clip key and first-notes overrides
+- [x] Google Drive picker + download + OPFS cache + "keep offline". **Drive is pending a manual
+      test with real credentials** (`spikes/README.md` §1): request building, the 401 re-auth
+      retry and folder find-or-create are unit-tested against a mocked `fetch`, but GIS, the Picker
+      and real downloads/uploads haven't run against Google.
+- [x] Upload → OPFS → Drive `TuneJournal/` folder (the Drive half is in the manual test above)
+- [x] Web Share Target (Recorder → app). The Android share sheet itself is still pending the
+      manual test from M0 (`spikes/README.md` §2).
+- [x] Trim editor (wavesurfer regions; slider fallback for YouTube); reorder clips
+
+M4 notes:
+- Domain: `domain/recordings.ts` (`addRecording` with Source dedupe, `updateClip`, `removeClip` /
+  `restoreClip`, `moveClip` / `moveClipBy`, `updateSource`, `orphanSources`, `checkBounds`) and
+  `domain/providers.ts` (labels and icons, `playbackOf`, `isLocalOnly`, `driveFileId`,
+  `recordingTitle`). The index gained `clipsOf`, `hasRecordings`, `providersOf`, `clipKey` and
+  `clipFirstNotes`, and `ListSettings.recordings` (`'has' | 'lacks'`) filters the list. Tests run
+  on plain objects and Automerge docs, plus fork/merge cases for concurrent reorders and adds.
+- Integrations: `integrations/links.ts` (provider detection from pasted or shared text),
+  `integrations/oembed.ts` (YouTube → noembed fallback, Spotify), `integrations/gdrive.ts` (request
+  builders, `DriveClient`, `GisTokenSource`, Picker) and `integrations/share-target.ts` (moved out
+  of `lib/spike/`; the service worker imports it from there).
+- Audio: `audio/cache.ts` (OPFS + IndexedDB fallback, metadata and "keep offline" in IndexedDB,
+  plus the share inbox), `audio/bounds.ts` (clip-bound, speed and time math), `audio/adapter.ts`
+  (`PlayerAdapter`), `html-audio.ts`, `youtube.ts`, `link-out.ts`, and the `player.svelte.ts`
+  store. Stores: `store/audio.svelte.ts`, `store/gdrive.svelte.ts`, `store/oembed.svelte.ts`.
+- UI: `PlayerBar`, `SpeedControl` (compact and large, for M6), `Recordings` (the detail
+  section), `AddRecording` (import panel), `ClipDialog` (details and overrides), `TrimEditor`
+  (reusable, emits `{start, end}`) in `TrimDialog`, `ProviderIcon`, `PiecePicker`, and
+  `ui/recordings.ts` (the add/backup/remove flows). Routes: `/shared`. Settings shows recordings
+  storage, "Remove downloaded recordings" and, when configured, Google Drive connect/disconnect.
+- wavesurfer.js (`^8.0.3`) and its regions plugin are dynamic imports in `TrimEditor`, so they're
+  a separate chunk loaded only when trimming a file. The YouTube IFrame API and Google's scripts
+  load on first use.
+- E2E (`e2e/recordings.test.ts`, helpers in `e2e/media.ts`): upload a generated WAV and play it
+  (`currentTime` advances, clip bounds), speed presets and ±5% (remembered across a reload), loop
+  and stop-at-end, the bar staying clear of the FABs on mobile, card provider icons; trim with the
+  waveform editor, preview, persistence across a reload, playback within the trim, reset; YouTube
+  and Spotify paste with intercepted oEmbed, a per-clip key override, YouTube playback and rate
+  through a stubbed IFrame API (the real script is never loaded) and the slider trim; reorder by
+  menu and by drag (desktop), remove with undo; offline playback of a kept-offline file; the
+  has/lacks filter; and share-target POSTs of a file (→ new tune) and of a link (→ existing piece),
+  simulated as a multipart form navigation. Routes are set on the browser context, since
+  `page.route` doesn't see requests from a page the service worker controls.
 
 **M5: Relations**
 - [ ] Links: Add child (picker + "New …"), parent/child display, reorder children
@@ -892,6 +931,74 @@ M3 notes:
   ties broken by link id. The detail view lists up to 10 sets (the first API page).
 - **Related (read-only)** in the detail view lists "Part of" (parents, by title) and "Contains"
   (children, in order). Links to a merged piece follow the redirect. Editing comes in M5.
+
+**Decided during M4 (2026-10-22)**
+
+- **Uploads stay `provider: 'upload'`.** The provider says where a recording came from; where its
+  bytes are kept is separate. A Drive backup sets `assetKey: "gdrive:<fileId>"` and points `url`
+  at the Drive file, and a later S3 store would use its own prefix. Picking a file *from* Drive
+  makes `provider: 'gdrive'` with the file id as `externalId`. Either way, `driveFileId()` finds
+  the Drive copy, and another device downloads it (`alt=media`) into its cache on first play.
+- **Source ids:** a source with an external id gets a deterministic id
+  (`youtube:<videoId>`, `spotify:track:<id>`, `gdrive:<fileId>`, `url:<url>`), like the M3
+  thesession links, so the same link added on two devices merges into one Source. A pasted
+  thesession tune link reuses `thesession:tune:<id>`. Files without one (uploads, shares) get a
+  random id, which is also their audio cache key. `addRecording` also finds an existing source by
+  provider + external id whatever its id, and only fills blanks on it.
+- **One clip per source and trim:** adding the same untrimmed recording to a piece twice returns
+  the existing clip; a different trim of the same source is a new clip.
+- **Orphan Sources are never deleted from the doc.** They're tiny, an Undo or another device's
+  concurrent edit may still point at one, and M5's Split reuses sources. `orphanSources()` lists
+  them. Their cached bytes are dropped by Settings → "Remove downloaded recordings" unless they're
+  kept offline or exist nowhere else.
+- **Reordering** gives only the moved clip a new fractional key between its neighbours (skipping
+  a neighbour that shares the lower key, which concurrent edits can produce). Two devices moving
+  different clips both apply; one clip moved two ways ends up in one place, the same everywhere.
+  Ties sort by clip id. Drag uses pointer events on a handle; "Move up/down" in each clip's menu
+  is the keyboard path.
+- **"Has recordings"** counts clips of actual recordings (upload, Drive, Recorder, YouTube,
+  Spotify, links), not reference links (thesession, FolkFriend). The import panel stays prominent
+  until there's something that plays *in the app* (file or YouTube); Spotify and plain links
+  always open in a new tab.
+- **oEmbed titles stay in the integration cache** (§13), keyed `oembed:<provider>:<id>`, 30-day
+  TTL, cleared with the thesession cache. A clip shows its own title, else the source's (a file
+  name), else the cached oEmbed title, else "YouTube recording". A shared link's title becomes
+  the clip title, since the user chose to share it.
+- **Audio cache:** bytes in OPFS (`audio/<encoded source id>`) or IndexedDB; metadata in the
+  `tunejournal-audio` IndexedDB database rather than an OPFS sidecar, so the page and the service
+  worker can't overwrite each other's writes. "Keep offline" is device-local and can be set before
+  the bytes exist (it downloads them). Uploads and shared files are always kept, since they're
+  the only copy until backed up. Played-but-not-kept downloads stay cached until removed in
+  Settings; there's no automatic eviction yet.
+- **Upload flow:** the file goes into the cache first, then the doc gets the Source and Clip, and
+  its duration is measured from the file. If Drive is connected on this device, it's backed up in
+  the background; otherwise the clip shows "Not backed up" and its menu offers "Back up to Drive"
+  (when Drive is configured). On a device without the bytes, an unbacked upload says "On another
+  device".
+- **Drive auth:** GIS token client with `drive.file`. Tokens (about an hour) are kept in
+  `sessionStorage`; "connected" is remembered in `localStorage`, so later token requests skip the
+  consent screen. `DriveClient` retries once with a fresh token on a 401. Drive UI is hidden when
+  any `PUBLIC_GOOGLE_*` value is empty.
+- **Player:** one global player in the root layout, so playback continues across pages. Loop is
+  ours on both adapters (seek back to the start at the end; without loop, stop at the end). The
+  speed is remembered per device as the default; the range is 25–200% (YouTube's, and Firefox
+  mutes outside 25–400%). `setPitchShift` is a no-op placeholder for M8. Link-out clips render
+  as ↗ links rather than buttons, so they work with popup blockers; `LinkOutAdapter` exists for
+  callers like Shuffle. The YouTube iframe sits small inside the bar while a YouTube clip is
+  loaded.
+- **Mini-player layout:** fixed to the bottom, full width. It publishes its height as
+  `--player-h`, which pads the page and lifts the mobile FABs and toasts above it (the bottom-left
+  FABs never overlap it). On phones the speed control folds behind a "100%" button; on desktop it
+  sits inline.
+- **Trim:** a trim covering the whole file is stored as no trim; a start under 0.05 s as no
+  start. A YouTube `t=` in a pasted link becomes the clip's start. The waveform editor previews
+  with its own audio; the YouTube slider previews through the global player with temporary bounds.
+- **Share target** moved to `/share-target` → `/shared`. The old `/spike/share-target` action is
+  still accepted (an installed WebAPK keeps it until it updates), and `/spike/share` forwards to
+  `/shared`. A shared file waits in an inbox until attached to an existing piece (search) or a new
+  Tune; a shared link (Share → Link) goes through the same attach flow as a pasted one. Shared
+  files from Recorder become `upload` sources.
+- **jigripper** isn't hinted at yet; it stays in M8.
 
 **Still open**
 

@@ -1,6 +1,6 @@
 import { self } from '$app/service-worker';
 import { immutable, assets } from '$app/manifest';
-import { handleShareTarget, isShareTarget } from '#lib/spike/share-target.ts';
+import { handleShareTarget, isShareTarget } from '#lib/integrations/share-target.ts';
 
 declare const __BUILD_ID__: string;
 

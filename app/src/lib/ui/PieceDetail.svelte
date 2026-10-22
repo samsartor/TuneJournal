@@ -9,6 +9,7 @@
 	import { library } from '#lib/store/library.svelte.ts';
 	import KindBadge from './KindBadge.svelte';
 	import Menu from './Menu.svelte';
+	import Recordings from './Recordings.svelte';
 	import SkillSlider from './SkillSlider.svelte';
 	import TheSessionInfo from './TheSessionInfo.svelte';
 	import { ui } from './state.svelte.ts';
@@ -25,16 +26,6 @@
 	const tuneId = $derived(piece?.external?.thesession?.tuneId);
 	const parents = $derived(piece && index ? index.parents(piece) : []);
 	const children = $derived(piece && index ? index.children(piece) : []);
-	/** Clips that are only links out (thesession for now); playable recordings arrive in M4. */
-	const links = $derived.by(() => {
-		if (!piece || !library.doc) return [];
-		const sources = library.doc.sources;
-		return Object.values(piece.clips)
-			.sort((a, b) => (a.order < b.order ? -1 : a.order > b.order ? 1 : 0))
-			.map((clip) => ({ clip, source: sources[clip.sourceId] }))
-			.filter(({ source }) => source?.provider === 'thesession');
-	});
-
 	// A piece merged into another redirects there (§6.4), following chains of merges.
 	$effect(() => {
 		if (!piece?.mergedInto || !index) return;
@@ -168,20 +159,7 @@
 			{/if}
 		</section>
 
-		<section>
-			<h2>Recordings</h2>
-			{#if links.length > 0}
-				<ul class="links">
-					{#each links as { clip, source } (clip.id)}
-						<li>
-							<!-- eslint-disable-next-line svelte/no-navigation-without-resolve -->
-							<a href={source.url} target="_blank" rel="noopener noreferrer">thesession.org ↗</a>
-						</li>
-					{/each}
-				</ul>
-			{/if}
-			<p class="placeholder muted">Audio recordings arrive in a later version.</p>
-		</section>
+		<Recordings {piece} />
 
 		{#if tuneId !== undefined}
 			{#key tuneId}<TheSessionInfo {tuneId} />{/key}
@@ -375,7 +353,6 @@
 		font-size: 1rem;
 	}
 
-	.links,
 	.related {
 		display: grid;
 		gap: var(--space-1);
@@ -384,7 +361,6 @@
 		list-style: none;
 	}
 
-	.links a,
 	.related a {
 		display: inline-flex;
 		align-items: center;
@@ -395,12 +371,6 @@
 		display: flex;
 		align-items: center;
 		gap: var(--space-2);
-	}
-
-	.placeholder {
-		padding: var(--space-3);
-		border: 1px dashed var(--color-border);
-		border-radius: var(--radius);
 	}
 
 	.history {

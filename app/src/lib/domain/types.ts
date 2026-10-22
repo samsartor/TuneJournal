@@ -147,4 +147,6 @@ export interface ListSettings {
 	favoritesOnly?: boolean;
 	/** Practiced within the last N days, or (within = false) not within them. */
 	practiced?: { within: boolean; days: number };
+	/** Has, or lacks, recordings (reference links such as thesession.org don't count). */
+	recordings?: 'has' | 'lacks';
 }

@@ -34,7 +34,7 @@
 	.toasts {
 		position: fixed;
 		left: 50%;
-		bottom: calc(var(--space-3) + env(safe-area-inset-bottom));
+		bottom: calc(var(--space-3) + env(safe-area-inset-bottom) + var(--player-h));
 		transform: translateX(-50%);
 		z-index: 50;
 		display: grid;
@@ -63,7 +63,7 @@
 	/* On phones, sit above the floating add/shuffle buttons. */
 	@media (max-width: 51.99rem) {
 		.toasts {
-			bottom: calc(5rem + env(safe-area-inset-bottom));
+			bottom: calc(5rem + env(safe-area-inset-bottom) + var(--player-h));
 		}
 	}
 </style>

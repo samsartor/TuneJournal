@@ -5,7 +5,12 @@
 	import { library, type ImportResult } from '#lib/store/library.svelte.ts';
 	import { previousLibraryUrls } from '#lib/store/repo.ts';
 	import { theSession } from '#lib/store/thesession.svelte.ts';
+	import { isLocalOnly } from '#lib/domain/providers.ts';
+	import { audioFiles } from '#lib/store/audio.svelte.ts';
+	import { gdrive } from '#lib/store/gdrive.svelte.ts';
+	import { oembed } from '#lib/store/oembed.svelte.ts';
 	import SyncIndicator from '#lib/ui/SyncIndicator.svelte';
+	import { ui } from '#lib/ui/state.svelte.ts';
 
 	let usage = $state<{ used: number; quota: number }>();
 	let persisted = $state<boolean>();
@@ -42,15 +47,44 @@
 		clearing = true;
 		try {
 			await theSession.clear();
+			oembed.reset();
 		} finally {
 			clearing = false;
 		}
 		await Promise.all([refreshCache(), refreshStorage()]);
 	}
 
+	let clearingAudio = $state(false);
+
+	/** Drops downloaded recordings not kept offline. Uploads that exist nowhere else stay. */
+	async function clearAudio() {
+		clearingAudio = true;
+		try {
+			const sources = library.doc?.sources ?? {};
+			const freed = await audioFiles.clearUnkept((id) => {
+				const source = sources[id as keyof typeof sources];
+				// Unknown ids are shared files still in the inbox, or not synced yet: keep them.
+				return !source || isLocalOnly(source);
+			});
+			ui.showToast(`Freed ${bytes(freed)}`);
+		} finally {
+			clearingAudio = false;
+		}
+		await refreshStorage();
+	}
+
+	async function connectDrive() {
+		try {
+			await gdrive.connect();
+		} catch (e) {
+			ui.showToast(`Google Drive: ${e instanceof Error ? e.message : e}`);
+		}
+	}
+
 	onMount(() => {
 		refreshStorage();
 		refreshCache();
+		void audioFiles.refresh();
 	});
 
 	function bytes(n: number) {
@@ -176,6 +210,26 @@
 		{:else}
 			<p class="muted">Storage usage isn’t available in this browser.</p>
 		{/if}
+		{#if audioFiles.usage}
+			{@const u = audioFiles.usage}
+			<p data-testid="audio-usage">
+				Recordings on this device: {u.count}
+				{u.count === 1 ? 'file' : 'files'}, {bytes(
+					u.bytes
+				)}{#if u.keptCount > 0}&nbsp;({u.keptCount}
+					kept offline, {bytes(u.keptBytes)}){/if}.
+			</p>
+			<button
+				type="button"
+				class="btn-quiet"
+				onclick={clearAudio}
+				disabled={clearingAudio || u.count === u.keptCount}>Remove downloaded recordings</button
+			>
+			<p class="muted small">
+				Removes recordings downloaded for playing, except those kept offline and uploads that aren’t
+				backed up anywhere else. They download again when played.
+			</p>
+		{/if}
 		{#if persisted !== undefined}
 			<p class="muted small">
 				{persisted
@@ -185,11 +239,29 @@
 		{/if}
 	</section>
 
+	{#if gdrive.configured}
+		<section>
+			<h2>Google Drive</h2>
+			<p class="muted small">
+				Uploads are backed up to a <code>TuneJournal</code> folder in your Drive, so your other devices
+				can play them. TuneJournal only sees files you pick or it created.
+			</p>
+			{#if gdrive.connected}
+				<p>Connected on this device.</p>
+				<button type="button" class="btn-quiet" onclick={() => gdrive.disconnect()}
+					>Disconnect</button
+				>
+			{:else}
+				<button type="button" onclick={connectDrive}>Connect Google Drive</button>
+			{/if}
+		</section>
+	{/if}
+
 	<section>
 		<h2>Cached data</h2>
 		<p class="muted small">
-			Tune details, sets and searches from thesession.org are kept on this device so they work
-			offline. They aren’t synced, and they’re fetched again when needed.
+			Tune details, sets and searches from thesession.org, and titles of linked videos, are kept on
+			this device so they work offline. They aren’t synced, and they’re fetched again when needed.
 		</p>
 		<p data-testid="cache-count">
 			{#if cachedEntries === undefined}
