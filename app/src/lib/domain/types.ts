@@ -123,9 +123,28 @@ export interface Settings {
 		skillMin: Skill;
 		skillMax: Skill;
 	};
-	list: {
-		sort: SortField;
-		descending: boolean;
-		kinds: Record<PieceKind, boolean>;
-	};
+	list: ListSettings;
+}
+
+/**
+ * The main list's last-used filter and sort. Every field except sort, descending and kinds is
+ * optional; absent means "no constraint".
+ */
+export interface ListSettings {
+	sort: SortField;
+	descending: boolean;
+	/** No kind selected shows every kind. */
+	kinds: Record<PieceKind, boolean>;
+	tags?: Record<string, true>;
+	/** Default 'any'. */
+	tagMode?: 'any' | 'all';
+	/** Inclusive; unrated counts as 1 (PLAN.md §14). */
+	skillMin?: Skill;
+	skillMax?: Skill;
+	unratedOnly?: boolean;
+	/** Normalized key, matched exactly. */
+	key?: string;
+	favoritesOnly?: boolean;
+	/** Practiced within the last N days, or (within = false) not within them. */
+	practiced?: { within: boolean; days: number };
 }

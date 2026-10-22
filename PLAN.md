@@ -4,8 +4,9 @@ A local-first PWA for tracking folk tunes: what I can play, what I want to learn
 heard or recorded them. Part todo list, part spaced-repetition deck, part file store, part music
 player.
 
-> Status: planning. Nothing is built yet. Sections marked **(decision)** are proposals to confirm;
-> see [Decisions and open questions](#14-decisions-and-open-questions) at the end.
+> Status: M0 (spikes) and M1 (skeleton and core list) are built; M1 is not deployed yet. Sections
+> marked **(decision)** are proposals to confirm; see
+> [Decisions and open questions](#14-decisions-and-open-questions) at the end.
 
 ---
 
@@ -107,10 +108,10 @@ Notes on the SvelteKit 3 setup:
 
 ---
 
-## 4. Automerge vs Evolu (decision)
+## 4. Automerge vs Evolu
 
-Both are good. My recommendation is **Automerge**, with a thin repository layer so the
-UI never touches the CRDT directly.
+**Decided (2026-10-22): Automerge.** The M0 spike confirmed sync and offline WASM work. A
+thin repository layer means the UI never touches the CRDT directly.
 
 **Evolu**
 - ➕ End-to-end encrypted by default. A public relay can't read the data. This is its best feature.
@@ -600,20 +601,39 @@ against plain objects.
 **M0: Spikes** (§7.1)
 - [x] Integration spike results recorded in §7 (Drive, the Android share sheet and the slow-down
       listening test are pending manual tests; see `spikes/README.md`)
-- [ ] Final Automerge/Evolu decision recorded in §4 (the spike found nothing against Automerge:
-      sync and offline WASM both work)
+- [x] Final Automerge/Evolu decision recorded in §4: Automerge
 - [x] Backend-timing decision recorded: not before M4 (§7.1)
 
 **M1: Skeleton and core list**
-- [ ] SvelteKit static + PWA + CI (typecheck, lint, vitest, build), deployed to a static host
-- [ ] Automerge repo with IndexedDB storage, Library doc creation, migrations scaffold
-- [ ] Piece CRUD: (+)/Add, Edit modal (kind, title, description), soft delete with undo toast
-- [ ] Tags with suggest/create input
-- [ ] Favorite ★, skill slider (unrated by default), key + first notes fields (tunes/parts only)
-- [ ] Practiced button + log, "last practiced" display
-- [ ] Search, filter, and sort bar
-- [ ] Responsive layout: full-screen detail on mobile, list + right-hand detail pane on desktop
-- [ ] Export/import
+- [x] SvelteKit static + PWA + CI (typecheck, lint, vitest, build). `npm run verify` runs check,
+      lint, unit tests and build; `npm run test:e2e` runs Playwright against `vite preview`.
+      **Not deployed yet:** the build is ready for any static host (SPA fallback `index.html`),
+      but there's no CI pipeline because the repo has no remote yet. The verify script is the CI
+      for now.
+- [x] Automerge repo with IndexedDB storage, Library doc creation, migrations scaffold
+- [x] Piece CRUD: (+)/Add, Edit modal (kind, title, description), soft delete with undo toast
+- [x] Tags with suggest/create input
+- [x] Favorite ★, skill slider (unrated by default), key + first notes fields (tunes/parts only)
+- [x] Practiced button + log, "last practiced" display
+- [x] Search, filter, and sort bar (the has/lacks recordings filter waits for M4)
+- [x] Responsive layout: full-screen detail on mobile, list + right-hand detail pane on desktop
+- [x] Export/import
+
+M1 notes:
+- Domain: `src/lib/domain/ops.ts` (mutations), `derived.ts` (memoized index, filter, sort, search),
+  `key.ts` (key parsing and normalization), `format.ts` (labels, relative time), `transfer.ts`
+  (import of an unrelated library). Unit tests run each op on plain objects and on Automerge
+  docs, plus fork/merge tests.
+- `derived.ts` routes practice, skill and key through `effectivePractice`, `effectiveSkill` and
+  `effectiveKey`. They return the piece's own values for now; M5 adds the ancestor walk and
+  Part → Tune inheritance there.
+- UI components are in `src/lib/ui/`. Routes: `/` and `/piece/[id]` share the `(main)` layout
+  (list + detail), plus `/settings` and a `/shuffle` placeholder. The spike routes are linked from
+  Settings.
+- E2E (`app/e2e/`, mobile 390×844 and desktop 1280×800): add/edit, tag suggestions, search, tag
+  filter (persisted), practice + undo, delete + undo, reload persistence, export/import, and an
+  offline reload. They block the public sync relay so tests stay local. Playwright uses the
+  system Chromium at `/usr/sbin/chromium` when it exists.
 
 **M2: Sync**
 - [ ] `BrowserWebSocketClientAdapter` to the public relay. Link-device QR screen.
@@ -719,6 +739,38 @@ against plain objects.
 - The framework is SvelteKit with `adapter-static`.
 - A Part inherits skill and key from its parent Tune unless it sets its own (§5). Tunes
   don't inherit from Sets.
+
+**Decided during M1 (2026-10-22)**
+
+- **Edits save as you go.** The edit modal has no Save/Cancel. Text fields write after a 400 ms
+  pause (and when the modal closes); everything else writes at once. "Done" or Escape closes it.
+- **Add opens the new piece's detail view** under the edit modal, so after "Done" you're on the new
+  piece. Blank pieces are left alone, not auto-discarded.
+- **Practice doesn't bump `modifiedAt`.** "Modified" is about edits; "last practiced" covers
+  practice. Logging practice from a card shows an Undo toast that removes that entry.
+- **Tag casing:** a typed tag takes the spelling already used in the library (from the
+  oldest-created piece that has it), otherwise it's stored as typed. If a merge brings in two
+  casings on one piece, the UI shows one and `removeTag` removes all of them.
+- **Keys:** stored as `"<tonic> <full mode>"` ("A dorian"), shown short ("A dor"). Input that
+  doesn't parse as a key is kept as trimmed free text. The key filter matches the stored value
+  exactly.
+- **List filter details:** no kind selected means all kinds. The skill range counts unrated as 1
+  (§14), and "Unrated only" finds unrated pieces. "Practiced not within N days" includes
+  never-practiced pieces. Search matches title words, ignoring case, accents and apostrophes.
+  The search text isn't persisted; filters and sort are, in `settings.list` (new optional fields,
+  so no migration was needed).
+- **Sort details:** untitled pieces sort last in both directions. Never-practiced counts as the
+  oldest "last practiced", and unrated as the lowest skill. Ties go by title, then creation time.
+- **Import:** a backup of the same library (shares its root change) merges as a CRDT. A file from
+  an unrelated library would conflict at the root maps, so its pieces, sources and links are
+  copied in by id instead. Import never deletes anything. Only `.automerge` files can be imported;
+  the JSON export is for reading.
+- **Persistence:** `navigator.storage.persist()` is requested on the first write of each session
+  if storage isn't already persistent. The repo also flushes pending saves on `pagehide` and when
+  the page is hidden, since automerge-repo debounces saves by ~100 ms.
+- **Filter panel** is collapsed by default on every width, with a one-line summary
+  ("Tunes · Title ↑ · 2 filters"). Whether it's open is remembered per device in
+  `localStorage`, not synced.
 
 **Still open**
 

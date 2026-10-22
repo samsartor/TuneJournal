@@ -10,10 +10,18 @@ const LIBRARY_URL_KEY = 'tunejournal.libraryUrl';
 let repo: Repo | undefined;
 
 export function getRepo(): Repo {
-	repo ??= new Repo({
-		storage: new IndexedDBStorageAdapter('tunejournal'),
-		network: [new BrowserWebSocketClientAdapter(SYNC_URL)]
-	});
+	if (!repo) {
+		repo = new Repo({
+			storage: new IndexedDBStorageAdapter('tunejournal'),
+			network: [new BrowserWebSocketClientAdapter(SYNC_URL)]
+		});
+		// Saves are debounced, so write out anything pending when the page is hidden or closed.
+		const flush = () => void repo?.flush().catch((e) => console.warn('Flush failed', e));
+		addEventListener('pagehide', flush);
+		document.addEventListener('visibilitychange', () => {
+			if (document.visibilityState === 'hidden') flush();
+		});
+	}
 	return repo;
 }
 
