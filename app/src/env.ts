@@ -1,7 +1,8 @@
 import { defineEnvVars } from '@sveltejs/kit/env';
 
 // Build-time public config, read from `.env` (see .env.example). Import from `$app/env/public`.
-// All optional: the integrations that need them show a setup hint when they're empty.
+// All optional: the integrations that need them show a setup hint when they're empty. The Google
+// values are only defaults: Settings → Google Drive can set them per device at runtime.
 const optional = (value: string | undefined) => value ?? '';
 
 const DEFAULT_SYNC_URL = 'wss://sync.automerge.org';

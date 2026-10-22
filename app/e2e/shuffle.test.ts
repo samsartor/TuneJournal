@@ -115,7 +115,7 @@ test('plays a recording, with speed and loop kept from card to card', async ({ p
 		.getByRole('listitem', { name: 'kesh-in-a' })
 		.getByRole('button', { name: /^Actions for/ })
 		.click();
-	await page.getByRole('menuitem', { name: 'Details…' }).click();
+	await page.getByRole('menuitem', { name: 'Edit…' }).click();
 	const details = page.getByRole('dialog');
 	await details.getByLabel('Key as text').fill('A');
 	await details.getByRole('button', { name: 'Done' }).click();

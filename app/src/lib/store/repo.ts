@@ -120,7 +120,7 @@ function storeUrl(url: string) {
 export function previousLibraryUrls(): string[] {
 	try {
 		const list = JSON.parse(localStorage.getItem(PREVIOUS_URLS_KEY) ?? '[]');
-		return Array.isArray(list) ? list.filter(isValidAutomergeUrl) : [];
+		return Array.isArray(list) ? [...new Set(list.filter(isValidAutomergeUrl))] : [];
 	} catch {
 		return [];
 	}

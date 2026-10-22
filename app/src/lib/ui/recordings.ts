@@ -4,7 +4,7 @@
 import type { InboxItem } from '#lib/audio/cache.ts';
 import { player } from '#lib/audio/player.svelte.ts';
 import { newId } from '#lib/domain/id.ts';
-import { DRIVE_ASSET, isLocalOnly } from '#lib/domain/providers.ts';
+import { DRIVE_ASSET, driveFileUrl, isLocalOnly } from '#lib/domain/providers.ts';
 import {
 	addRecording,
 	removeClip,
@@ -13,8 +13,7 @@ import {
 	type NewSource
 } from '#lib/domain/recordings.ts';
 import { tuneSourceId } from '#lib/domain/thesession.ts';
-import type { ClipId, PieceId, SourceId } from '#lib/domain/types.ts';
-import { driveFileUrl } from '#lib/integrations/gdrive.ts';
+import type { ClipId, PieceId, Source, SourceId } from '#lib/domain/types.ts';
 import { findUrl, detectLink, type DetectedLink } from '#lib/integrations/links.ts';
 import { audioType, extensionFor, titleFromFileName } from '#lib/integrations/share-target.ts';
 import { audioCache } from '#lib/audio/cache.ts';
@@ -139,6 +138,23 @@ export async function addFromDrive(pieceId: PieceId): Promise<ClipId | undefined
 			.catch((e) => ui.showToast(`Couldn’t download from Google Drive: ${message(e)}`));
 	}
 	return clipId;
+}
+
+/** Saves a cached recording's bytes as a file (for uploads that aren't anywhere else yet). */
+export async function downloadRecording(source: Source, title: string) {
+	try {
+		const blob = await audioCache.get(source.id);
+		if (!blob) throw new Error('The recording isn’t on this device.');
+		const type = blob.type || source.mime || '';
+		const url = URL.createObjectURL(blob);
+		const a = document.createElement('a');
+		a.href = url;
+		a.download = `${title.replace(/[\\/:*?"<>|]+/g, ' ').trim() || 'recording'}.${extensionFor(type)}`;
+		a.click();
+		setTimeout(() => URL.revokeObjectURL(url), 1000);
+	} catch (e) {
+		ui.showToast(`Couldn’t save the file: ${message(e)}`);
+	}
 }
 
 /** Turns a detected link into a Source to add. thesession links share the M3 link's id. */

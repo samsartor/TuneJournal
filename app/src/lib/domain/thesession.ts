@@ -1,10 +1,13 @@
 // Ops that tie pieces to thesession.org (PLAN.md §6.3, §6.4). They take plain data picked from the
-// integration layer, and store only ids plus what the user chose: title, a type tag, key and first
-// notes from the picked setting, and a link-only Source (PLAN.md §13).
+// integration layer, and store only ids plus what the user chose: title, a type tag, a link-only
+// Source, and the picked setting's key and first notes, which go on the thesession recording (the
+// link's clip), not on the piece. The piece shows them through effectiveKey/effectiveFirstNotes
+// until it gets its own (PLAN.md §5, §13).
 
 import { normalizeKey } from './key.ts';
 import { addTag, createPiece, getPiece, updatePiece } from './ops.ts';
 import { orderAfter } from './order.ts';
+import { updateClip, type ClipPatch } from './recordings.ts';
 import { linkPieces } from './relations.ts';
 import type { ClipId, Library, Piece, PieceId, Source, SourceId, Timestamp } from './types.ts';
 
@@ -119,7 +122,7 @@ export function linkTheSessionTune(
 
 	const previous = piece.external?.thesession?.tuneId;
 	if (previous !== undefined && previous !== tune.tuneId) {
-		delete piece.clips[tuneSourceId(previous) as string as ClipId];
+		delete piece.clips[tuneClipId(previous)];
 		if (piece.external?.thesession && 'settingId' in piece.external.thesession) {
 			delete piece.external.thesession.settingId;
 		}
@@ -141,32 +144,57 @@ export function linkTheSessionTune(
 }
 
 export interface ApplySettingOptions {
-	/** Replace a key or first notes that are already set; otherwise only blanks are filled. */
+	/**
+	 * Replace a key or first notes the thesession recording already has; otherwise only its blanks
+	 * are filled.
+	 */
 	overwrite?: boolean;
 	now?: Timestamp;
 }
 
-/** Stores the chosen thesession setting and fills key and first notes from it. */
+/** The clip of a piece's link to thesession tune `tuneId`. */
+export function tuneClipId(tuneId: number): ClipId {
+	return tuneSourceId(tuneId) as string as ClipId;
+}
+
+/**
+ * Stores the chosen thesession setting, and writes its key and first notes to the piece's
+ * thesession recording (the tune link's clip, re-added if it was removed). The piece's own key and
+ * first notes are never touched: it inherits these until the user sets its own (PLAN.md §5).
+ * Returns the clip written to, if the piece is linked to a tune.
+ */
 export function applyTheSessionSetting(
 	lib: Library,
 	id: PieceId,
 	setting: TheSessionSettingInfo,
 	options: ApplySettingOptions = {}
-): void {
+): ClipId | undefined {
 	const now = options.now ?? Date.now();
 	const piece = getPiece(lib, id);
 	piece.external ??= {};
 	piece.external.thesession ??= {};
-	if (piece.external.thesession.settingId !== setting.settingId) {
-		piece.external.thesession.settingId = setting.settingId;
+	const ts = piece.external.thesession;
+	if (ts.settingId !== setting.settingId) {
+		ts.settingId = setting.settingId;
 		piece.modifiedAt = now;
 	}
+	if (ts.tuneId === undefined) return undefined;
+	const sourceId = tuneSourceId(ts.tuneId);
+	attachLink(lib, piece, sourceId, tuneUrl(ts.tuneId), String(ts.tuneId), now);
+	const clipId = tuneClipId(ts.tuneId);
+	const clip = piece.clips[clipId];
 	const key = setting.key ? normalizeKey(setting.key) : undefined;
-	const firstNotes = setting.firstNotes?.trim() || undefined;
-	if (key && (options.overwrite || !piece.key)) updatePiece(lib, id, { key }, now);
-	if (firstNotes && (options.overwrite || !piece.firstNotes)) {
-		updatePiece(lib, id, { firstNotes }, now);
+	const firstNotes = setting.firstNotes?.trim().replace(/\s+/g, ' ') || undefined;
+	const patch: ClipPatch = {};
+	if (key && (options.overwrite || !clip.key)) patch.key = key;
+	if (firstNotes && (options.overwrite || !clip.firstNotes)) patch.firstNotes = firstNotes;
+	if (options.overwrite) {
+		// A new setting replaces the old one's values, even where it has none of its own.
+		if (!key) patch.key = null;
+		if (!firstNotes) patch.firstNotes = null;
 	}
+	updateClip(lib, id, clipId, patch, now);
+	return clipId;
 }
 
 /** Removes the thesession ids and link from a piece. Title, tags, key and notes stay. */

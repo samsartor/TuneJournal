@@ -1,9 +1,5 @@
 <script lang="ts">
-	import {
-		PUBLIC_GOOGLE_API_KEY,
-		PUBLIC_GOOGLE_APP_ID,
-		PUBLIC_GOOGLE_CLIENT_ID
-	} from '$app/env/public';
+	import { gdrive } from '#lib/store/gdrive.svelte.ts';
 	import {
 		download,
 		ensureFolder,
@@ -16,7 +12,9 @@
 	import { getFile, putFile } from '#lib/spike/file-store.ts';
 	import { resolve } from '$app/paths';
 
-	const configured = !!(PUBLIC_GOOGLE_CLIENT_ID && PUBLIC_GOOGLE_API_KEY && PUBLIC_GOOGLE_APP_ID);
+	// Settings → Google Drive on this device, else the build's PUBLIC_GOOGLE_* values.
+	const configured = $derived(gdrive.configured);
+	const config = $derived(gdrive.config);
 
 	let token = $state<string>();
 	let expiresAt = $state(0);
@@ -46,7 +44,7 @@
 	const signIn = () =>
 		step('sign in', async () => {
 			await loadGoogle();
-			const t = await requestToken(PUBLIC_GOOGLE_CLIENT_ID, token ? '' : 'consent');
+			const t = await requestToken(config.clientId!, token ? '' : 'consent');
 			token = t.token;
 			expiresAt = t.expiresAt;
 		});
@@ -56,8 +54,8 @@
 			if (!token) throw new Error('Sign in first');
 			const doc = await pickAudio({
 				token,
-				apiKey: PUBLIC_GOOGLE_API_KEY,
-				appId: PUBLIC_GOOGLE_APP_ID
+				apiKey: config.apiKey!,
+				appId: config.appId!
 			});
 			if (!doc) return note('picker cancelled');
 			picked = doc;
@@ -97,9 +95,9 @@
 
 {#if !configured}
 	<p class="err">
-		Missing <code>PUBLIC_GOOGLE_CLIENT_ID</code>, <code>PUBLIC_GOOGLE_API_KEY</code> or
-		<code>PUBLIC_GOOGLE_APP_ID</code>. Copy <code>app/.env.example</code> to <code>app/.env</code>,
-		fill it in (see <code>spikes/README.md</code>) and restart the dev server.
+		Google Drive isn’t set up. Paste the client ID, API key and app ID in
+		<a href={resolve('/settings')}>Settings → Google Drive</a>, or put them in
+		<code>app/.env</code> (see <code>spikes/README.md</code>) and restart the dev server.
 	</p>
 {/if}
 

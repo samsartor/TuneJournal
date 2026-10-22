@@ -20,23 +20,30 @@ npm run dev          # http://localhost:5173/spike
 
 ## 1. Google Cloud setup (for `/spike/drive`)
 
-You need three values in `app/.env` (copy `app/.env.example`):
+You need three values. Either paste them into the app at runtime, in **Settings → Google
+Drive** (no rebuild needed), or put them in `app/.env` (copy `app/.env.example`) before building:
 
-| Variable | What it is |
-|---|---|
-| `PUBLIC_GOOGLE_CLIENT_ID` | OAuth 2.0 *Web application* client ID (`….apps.googleusercontent.com`) |
-| `PUBLIC_GOOGLE_API_KEY` | Browser API key, used by the Picker |
-| `PUBLIC_GOOGLE_APP_ID` | The Cloud **project number** (digits, not the project ID) |
+| Settings field | `.env` variable | What it is |
+|---|---|---|
+| OAuth client ID | `PUBLIC_GOOGLE_CLIENT_ID` | OAuth 2.0 *Web application* client ID (`….apps.googleusercontent.com`) |
+| API key | `PUBLIC_GOOGLE_API_KEY` | Browser API key, used by the Picker |
+| App ID (project number) | `PUBLIC_GOOGLE_APP_ID` | The Cloud **project number** (digits, not the project ID) |
 
-All three end up in the client bundle. That's expected: they're public identifiers, locked down
-by origin restrictions, not secrets.
+Values pasted in Settings are saved on that device only (localStorage, never in the synced
+library), so set them on each device. They take precedence over the `.env` values, which stay as
+the defaults. Settings shows the page's origin to add to the OAuth client (step 4), and a **Test
+connection** button that signs in and lists the app's Drive folder. `/spike/drive` uses the same
+settings.
+
+The `.env` values end up in the client bundle. That's expected: they're public identifiers,
+locked down by origin restrictions, not secrets.
 
 Steps (console.cloud.google.com; Google moved OAuth settings under **Google Auth Platform** in
 2025, and older consoles call the same pages "OAuth consent screen" and "Credentials"):
 
 1. **Create a project.** Project picker → *New project* → name it `TuneJournal`. Then open
-   *Dashboard* (or *IAM & Admin → Settings*) and copy the **Project number**. That's
-   `PUBLIC_GOOGLE_APP_ID`.
+   *Dashboard* (or *IAM & Admin → Settings*) and copy the **Project number**. That's the app ID
+   (`PUBLIC_GOOGLE_APP_ID`).
 2. **Enable APIs.** *APIs & Services → Library*, then enable **Google Drive API** and **Google
    Picker API**.
 3. **Consent screen.** *Google Auth Platform → Get started* (or *OAuth consent screen*):
@@ -49,21 +56,23 @@ Steps (console.cloud.google.com; Google moved OAuth settings under **Google Auth
 4. **OAuth client.** *Google Auth Platform → Clients → Create client* (or *Credentials → Create
    credentials → OAuth client ID*):
    - Type: **Web application**, name `TuneJournal web`.
-   - **Authorized JavaScript origins**, with no paths and no trailing slashes:
+   - **Authorized JavaScript origins**, with no paths and no trailing slashes (Settings → Google
+     Drive shows the origin you're on):
      - `http://localhost:5173`
      - `http://localhost:4173` (`npm run preview`)
      - the HTTPS origin you'll use for phone testing (§3), e.g. `https://<machine>.<tailnet>.ts.net`
      - the future deploy origin, e.g. `https://tunejournal.pages.dev` (it can be added later)
    - **Authorized redirect URIs**: leave empty. The GIS token client uses a popup, not redirects.
-   - Copy the client ID into `PUBLIC_GOOGLE_CLIENT_ID`.
+   - Copy the client ID into Settings → Google Drive, or `PUBLIC_GOOGLE_CLIENT_ID`.
    - Origin changes can take a few minutes to apply. Until then you'll get
      `origin_mismatch` / `idpiframe_initialization_failed`.
 5. **API key.** *APIs & Services → Credentials → Create credentials → API key*, then *Edit*:
    - *Application restrictions*: **Websites**, and add the same origins as above with a path
      wildcard, e.g. `http://localhost:5173/*`.
    - *API restrictions*: **Restrict key**, allowing only **Google Picker API**.
-   - Copy it into `PUBLIC_GOOGLE_API_KEY`.
-6. Restart `npm run dev`. The env vars are inlined when the dev server or build starts.
+   - Copy it into Settings → Google Drive, or `PUBLIC_GOOGLE_API_KEY`.
+6. In Settings → Google Drive, press **Save**, then **Test connection**. (With `.env` instead,
+   restart `npm run dev`: env vars are inlined when the dev server or build starts.)
 
 ### Test (`/spike/drive`)
 
@@ -80,7 +89,7 @@ Steps (console.cloud.google.com; Google moved OAuth settings under **Google Auth
 
 ### Test the app's Drive flows (M4)
 
-The spike page tests the raw API calls; these test what M4 built on them. With the same `.env`:
+The spike page tests the raw API calls; these test what M4 built on them. With the same settings:
 
 1. **Settings → Google Drive → Connect Google Drive.** It should show "Connected on this device".
 2. On a tune with no recordings, **Google Drive** in the import panel opens the Picker. Pick an

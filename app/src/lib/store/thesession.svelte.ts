@@ -9,6 +9,9 @@ import { CachedTheSession } from '#lib/integrations/thesession-cache.ts';
 import {
 	TheSessionClient,
 	TheSessionError,
+	dedupeSearch,
+	dedupeSets,
+	dedupeTune,
 	type SearchResults,
 	type Tune,
 	type TuneSets
@@ -89,7 +92,9 @@ class TheSessionStore {
 		});
 	}
 
-	#keep = (tune: Tune) => {
+	#keep = (cached: Tune) => {
+		// Data cached by an older version may still hold repeats; the UI keys lists by id.
+		const tune = dedupeTune(cached);
 		this.tunes.set(tune.id, tune);
 		this.#primed.add(tune.id);
 		return tune;
@@ -104,7 +109,9 @@ class TheSessionStore {
 
 	/** The first page of sets the tune appears in (10 per page). */
 	sets(id: number): Resource<TuneSets> {
-		return this.#resource(`sets:${id}`, (onUpdate) => this.api.sets(id, 1, { onUpdate }));
+		return this.#resource(`sets:${id}`, async (onUpdate) =>
+			dedupeSets(await this.api.sets(id, 1, { onUpdate: (s) => onUpdate(dedupeSets(s)) }))
+		);
 	}
 
 	/** Fetches (or reads the cached) tune directly, for the autofill flow. */
@@ -113,8 +120,10 @@ class TheSessionStore {
 		return tune;
 	}
 
-	search(q: string, onUpdate?: (r: SearchResults) => void): Promise<SearchResults> {
-		return this.api.search(q, { onUpdate });
+	async search(q: string, onUpdate?: (r: SearchResults) => void): Promise<SearchResults> {
+		return dedupeSearch(
+			await this.api.search(q, { onUpdate: onUpdate && ((r) => onUpdate(dedupeSearch(r))) })
+		);
 	}
 
 	/** Loads cached tunes for these ids into `tunes`, without touching the network. */
@@ -124,7 +133,7 @@ class TheSessionStore {
 			this.#primed.add(id);
 			this.api
 				.cachedTune(id)
-				.then((tune) => tune && this.tunes.set(id, tune))
+				.then((tune) => tune && this.tunes.set(id, dedupeTune(tune)))
 				.catch(() => this.#primed.delete(id));
 		}
 	}

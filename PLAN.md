@@ -85,7 +85,7 @@ Three separate kinds of local data, on purpose:
 | User state | **Automerge** 3 + `@automerge/automerge-repo` **~2.5.x** | See §4. Needs `vite-plugin-wasm` and `build.target: 'esnext'` (for top-level await). The repo packages are pinned to 2.5.x because npm's `latest` tag points at a 2.6 alpha. |
 | Local storage | `automerge-repo-storage-indexeddb`, OPFS for audio, a tiny IndexedDB wrapper for caches (`integrations/cache.ts`) | |
 | Styling | Plain CSS with custom properties, or Tailwind | No component library. Mobile-first. |
-| Audio UI | `<audio>` + wavesurfer.js (regions plugin) for trimming | YouTube uses the IFrame Player API behind the same player interface. |
+| Audio UI | `<audio>`; the trim editor draws its own waveform (Web Audio decode → canvas) | YouTube uses the IFrame Player API behind the same player interface. |
 | Search | In-memory, MiniSearch or plain filtering | A few thousand pieces at most. |
 | Tests | Vitest (domain layer), Playwright (e2e, offline mode) | |
 | Backend (later) | Hono on Node in Docker on the VPS | Hono also runs on Workers/Deno/Bun, so the light endpoints stay portable. Heavy ones (yt-dlp, headless Chrome) need a real server anyway. |
@@ -181,8 +181,8 @@ interface Piece {
   description?: string;                    // plain text/markdown
   tags: Record<string, true>;              // free-form; case-insensitive matching, stored as typed
   skill?: 1 | 2 | 3 | 4 | 5;               // undefined = unrated (default); 1 = never played … 5 = amazing
-  key?: string;                            // usual key, e.g. "D major", "A dorian"; hidden for set/session
-  firstNotes?: string;                     // ABC snippet of the opening, e.g. "A2 FA dAFA"; hidden for set/session
+  key?: string;                            // usual key, e.g. "D major", "A dorian"; hidden for set/session; else inherited (below)
+  firstNotes?: string;                     // ABC snippet of the opening, e.g. "A2 FA dAFA"; hidden for set/session; else inherited
   favorite: boolean;
   clips: Record<ClipId, Clip>;             // recordings attached to this piece
   practice: PracticeEntry[];               // append-only (concurrent appends merge fine)
@@ -203,8 +203,8 @@ interface Clip {                           // a (possibly trimmed) view onto a S
   start?: number;                          // seconds; undefined = beginning
   end?: number;                            // seconds; undefined = end
   title?: string;                          // overrides source title
-  key?: string;                            // key as played in this recording; overrides piece.key
-  firstNotes?: string;                     // ABC opening as played here; overrides piece.firstNotes
+  key?: string;                            // key as played in this recording (a thesession link: its setting's)
+  firstNotes?: string;                     // ABC opening as played here (a thesession link: its setting's)
   note?: string;
   addedAt: number;
 }
@@ -245,13 +245,20 @@ Notes:
 - `Source` lives at the library level, so splitting or sharing a recording between pieces never
   duplicates the asset. Only the clip's `start`/`end` differ.
 - **Key and first notes** exist at two levels, because one tune is often played in several
-  keys. `piece.key`/`piece.firstNotes` hold the usual version, which is the one used for
-  search, filter, and card display. `clip.key`/`clip.firstNotes` override them for a specific
-  recording, and the player shows the clip's effective key. Both fields are hidden in the UI
-  for sets and sessions; the data stays if the kind changes. Keys are stored normalized
-  (tonic + mode) so they can be filtered, and are rendered like "D maj" or "A dor". The first
-  notes are an ABC fragment. Display them as text at first; rendering them with abcjs comes
-  later.
+  keys. `clip.key`/`clip.firstNotes` say how a specific recording goes; a linked thesession.org
+  setting's key and opening bars live on the **thesession recording** (the tune link's clip), not
+  on the piece. `piece.key`/`piece.firstNotes` are the user's own "usual version". A piece's
+  **effective** key is, in order: its own `key`; else the `key` of its first clip (in clip order)
+  that has one; else, for a Part only, its Tune's effective key (the Part → Tune rule below).
+  Effective first notes are its own, else the first clip's that has some; Parts never take their
+  Tune's (a B part starts differently). Filters, sort, the filter's key list, cards, the detail
+  view and Shuffle use the effective values, shown muted with "from <recording title>" (or
+  "from <Tune>") when inherited, and setting the piece's own value overrides them. Each clip's own
+  effective key is its `key`, else the piece's effective key; the player shows that. Both fields
+  are hidden in the UI for sets and sessions; the data stays if the kind changes. Keys are stored
+  normalized (tonic + mode) so they can be filtered, and are rendered like "D maj" or "A dor".
+  The first notes are an ABC fragment. Display them as text at first; rendering them with abcjs
+  comes later.
 - Derived values like "last practiced", "times practiced", and "has recordings" are computed,
   never stored. A small memoized index layer rebuilds them on doc change.
 - **Practice propagates upward at query time, not write time.** Practicing a Set logs an entry
@@ -261,8 +268,9 @@ Notes:
   "Last practiced" and "times practiced" on cards, sorting, and the shuffle's staleness factor
   all use the effective history. The detail view shows it with each inherited entry labelled
   "via <Set name>".
-- **Parts inherit from their Tune.** If a Part has no `skill` or `key` of its own, it uses the
-  value from its parent Tune. Inherited values appear muted, with a "from <Tune>" hint, and
+- **Parts inherit from their Tune.** If a Part has no `skill` of its own, it uses the value from
+  its parent Tune. If it has no `key` of its own and none of its own recordings has one, it uses
+  its Tune's effective key (the Tune's own, else the Tune's first recording's). Inherited values appear muted, with a "from <Tune>" hint, and
   editing one gives the Part its own value. Filters, sorting, and the shuffle use the effective
   value. If a Part belongs to several Tunes, it inherits from the earliest-created one.
   - `firstNotes`, title, tags, favorite, and recordings are *not* inherited. A B part starts
@@ -321,7 +329,11 @@ Notes:
   "Create 'xyz'" row is always present when the text is new.
 - **Recordings section:** if there are no clips, a prominent import panel shows the source
   buttons (Drive, Recorder, YouTube, Upload, Link). Once clips exist it collapses to a small
-  "+ Add recording". Clips can be dragged to reorder, removed, or trimmed.
+  "+ Add recording". Clips can be dragged to reorder, removed, or trimmed. Each clip's ⋯ menu has
+  **Edit…** (title, key and first notes as played; a thesession link's tune and setting; another
+  link's URL; Trim), **Open link ↗** (YouTube, Spotify, thesession, the Drive file's page, any
+  URL; an upload that's only on this device offers **Download file** instead), Trim…, Move
+  up/down, Back up to Drive and Remove.
 
 ### 6.3 Add flow
 1. Tap (+). This creates a blank Tune immediately and opens Edit, so nothing is lost if the user
@@ -329,8 +341,9 @@ Notes:
 2. Optionally press 🔍 next to the title to search thesession and pick a result. This fills the
    title, `external.thesession.tuneId`, and a type tag (Reel/Jig/Slip Jig/Hornpipe/Polka/…). It
    can also add the thesession link as a non-audio source. If the result has several settings,
-   the user picks one, and that setting fills in `key` (from its `mode`, e.g. `Dmajor`) and
-   `firstNotes` (the first bar or two of its ABC).
+   the user picks one, and that setting's `key` (from its `mode`, e.g. `Dmajor`) and
+   `firstNotes` (the first bar or two of its ABC) go on the thesession recording, which the
+   piece inherits them from (§5). The recording's Edit… can later pick another tune or setting.
 3. If that thesession tune already exists in the library, offer to open it instead, or to merge.
 
 ### 6.4 Relations: Add / Split / Merge
@@ -426,9 +439,12 @@ RNG, so it's unit-testable.
     UI therefore works for both adapters. YouTube's own pitch correction applies, and we can't
     turn it off.
   - `LinkOutAdapter` (Spotify, thesession, unknown) opens the URL in a new tab.
-- The **trim editor** uses wavesurfer.js with the regions plugin on file-backed sources. For
-  YouTube it uses a simple dual-handle slider with time readout and preview, since we can't
-  get a waveform.
+- The **trim editor** (Trim, and Split's region picker) has its own transport, since the
+  mini-player bar sits behind its dialog: play/pause, a playhead you can tap or drag on the
+  waveform (a plain timeline for YouTube, where we can't get the audio), two draggable start/end
+  flags, "Set start/end at playhead", a looped preview of the region, and typed times. It drives
+  the global player and its adapters (the clip loads there, playing the whole recording while
+  trimming). The waveform is drawn on a canvas from the file decoded with Web Audio.
 
 ### 6.7 Provider decoration
 Each provider has an icon and colour accent on its clip rows and card icons. Links that open
@@ -799,6 +815,43 @@ M6 notes:
   the live count, the skill range, temperatures and "respect list filter" surviving a reload; the
   "Nothing to shuffle" state → Change settings → a card is dealt.
 
+**Fixes after M6 review** (user-reported bugs and nits; decisions in §14)
+- [x] "500 Internal Error" on opening some tunes: thesession.org's `/tunes/{id}/sets` can list a
+      set twice (High Drive, tune 4428, lists set 150333 twice), and the "Appears in sets" list is
+      keyed by set id, so Svelte threw `each_key_duplicate`. The parsers drop repeated sets, search
+      hits, settings and recordings, and the store dedupes data cached before the fix. Every keyed
+      `{#each}` was audited: menus key by position, the merge dialog and "previous libraries"
+      dedupe their ids; the rest key by ids that are unique by construction (map keys, `tagsOf`,
+      deduped relations). A `+error.svelte` page (with a client `handleError` that keeps the real
+      message) replaces the bare error, with "Back to list" and Reload.
+- [x] Overflow menus are fixed to the viewport: they open below the button when there's room
+      (else on the roomier side), stay inside the viewport horizontally, scroll when too tall, and
+      reposition on scroll and resize. Items can be real links (for "Open link ↗").
+- [x] The skill slider's "Clear rating" / "Use <Tune>'s" moved into its header row, next to the
+      value, so the slider's width never depends on its value (detail, edit modal, Shuffle).
+- [x] The clip menu's "Details…" is now **Edit…**: thesession links can move to another tune
+      (the 🔍 search) or setting (the picker, with key and first bars, current one marked); other
+      links can be corrected (provider detected again, so the oEmbed title refreshes; a `t=` sets
+      the start); title, key and first notes as played; Trim.
+- [x] thesession key and first notes live on the thesession recording, and pieces inherit key and
+      first notes from their first recording that has them (§5).
+- [x] The trim editor has its own transport over the global player (§6.6), in Trim and Split.
+- [x] Every recording's menu has **Open link ↗** (or **Download file** for an upload that's only
+      on this device).
+- [x] Desktop pages scrolled far past their content: absolutely positioned `.visually-hidden`
+      elements (the hidden file input, "(in library)" labels) inside the two scrolling panes had
+      the page as their containing block, so the page grew by however far down the pane they sat.
+      The panes are now positioned (and contain overscroll).
+- [x] Google Drive can be set up at runtime: Settings → Google Drive takes the client ID, API key
+      and project number, saved on the device only, overriding the build's `PUBLIC_GOOGLE_*`.
+- Tests: unit tests for the dedupe, menu placement, effective key/first notes, `relinkClip`,
+  `openLinkOf`, the clip-level setting autofill and the Drive config helpers; `e2e/fixes.test.ts`
+  covers each item (repeated sets, the error page, menus in the viewport, slider width in all
+  three views, changing a thesession tune and setting, correcting a link, Open link / Download
+  file, the trim transport in Trim and Split, no overscroll with and without the player, runtime
+  Drive setup with a stubbed Google). The user's real library was imported in a scratch
+  Playwright run that opened every piece and dealt Shuffle cards with no errors.
+
 **M7: Backend (as needed)**
 - [ ] Self-hosted sync server; migrate the doc off the public relay
 - [ ] yt-dlp extraction → asset store → offline YouTube clips with waveform
@@ -1122,6 +1175,53 @@ M6 notes:
   settings sheet is open. A hint line shows on devices with a fine pointer.
 - **Two-handle skill range** is two native range inputs on one track, so each handle stays
   labelled and keyboard-operable; they can meet but not cross.
+
+**Decided in the fixes after M6 review (2026-10-22)**
+
+- **thesession key and first notes live on the recording** (decided with the user). Picking a
+  setting (title-search autofill, the clip's Edit…, or a promoted set's tune) writes its key and
+  first notes to the thesession clip (`thesession:tune:{id}`, re-added if it was removed), never
+  to the piece. With one setting only the clip's blanks are filled; picking one replaces the
+  clip's values, clearing what the new setting lacks. The M3 rule "fills only blank key and first
+  notes" now applies to the clip.
+- **Effective key and first notes** (§5): own value → first clip in order with one → (key only,
+  Parts only) the Tune's effective key. The Part's own recordings come before its Tune because
+  they're how this Part is actually played; first notes still never come from the Tune (M5). The
+  index exposes `keyOf`/`firstNotesOf` (value plus origin: own, clip or tune) and
+  `inheritedKey`/`inheritedFirstNotes` (what clearing the own value goes back to). The filter's key
+  list now offers effective keys, superseding M5's "only keys pieces have themselves".
+- **Existing data isn't migrated.** Pieces whose key and first notes the old autofill wrote keep
+  them as their own values. The edit modal offers "Use <recording>'s key" / "Use <recording>'s
+  first notes" to drop the copy and inherit instead.
+- **Changing a thesession link's tune** goes through the same search and duplicate/merge steps as
+  the title search, so it relinks the *piece* (the tune id is its identity); the old link's clip
+  and setting id go, as in M3. The clip Edit dialog follows the link to its new clip id.
+- **Correcting a link** (`relinkClip`) finds or creates the Source for the new URL, as adding one
+  does, and moves the clip onto it; the old Source stays (§14 M4). The clip keeps its title, key,
+  notes and trim, unless the new link carries a start (`t=`), which replaces the start. Files
+  (upload, Drive, Recorder) and the tune and set links can't be relinked this way.
+- **Trim transport:** the trim editor loads the clip into the global player (paused) and calls
+  `player.editTrim()`, which drops the clip bounds so the whole recording plays; "Preview (loop)"
+  uses the existing `preview(start, end)` (now optionally without restarting while a flag moves);
+  closing pauses and `endPreview()` restores the clip's bounds and loop. The flags are two native
+  range inputs over the lane (like M6's skill range), so they stay keyboard-operable; a "Playhead"
+  slider is the keyboard path for scrubbing. wavesurfer.js was dropped: the editor decodes the
+  file with `OfflineAudioContext` and draws peaks on a canvas, which made its own transport much
+  simpler than bending wavesurfer's media element onto the global player.
+- **Open link** is a real `<a target="_blank">` menu item (popup blockers allow it). Its target
+  (`openLinkOf`, in `domain/providers.ts`): the Drive file's web view for anything kept in Drive,
+  else the source's http(s) URL. A local-only upload offers Download file (from the audio cache).
+- **Menus** use `position: fixed` with measured placement (`ui/menu.ts`, unit-tested), not the
+  Popover API, which would also work but adds nothing here.
+- **Google Drive settings** are stored in `localStorage` (`tunejournal.gdrive.config`), field by
+  field over the build's `PUBLIC_GOOGLE_*` values; blank fields fall back to the build's.
+  Changing the client ID forgets the old connection (its tokens belong to the other client).
+  "Test connection" gets a token and lists the app's folder, which checks the client ID, the
+  origin and the Drive API; the API key and project number are only used by the Picker, so they're
+  checked when a file is picked. The form warns about likely typos (client ID suffix, a non-numeric
+  project number) without blocking.
+- **Error page:** `src/hooks.client.ts` returns the thrown error's own message for unexpected
+  errors (there's no server to hide details from); `+error.svelte` shows it, with "Back to list".
 
 **Still open**
 

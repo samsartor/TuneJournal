@@ -1,37 +1,109 @@
 <!--
-	Edit a recording's own details (PLAN.md §5): its title, and the key and first notes as played in
-	it, which override the piece's. Fields save when they change, like the edit modal.
+	Edit one recording (PLAN.md §5, §6.2): its title, the key and first notes as played in it (which
+	the piece inherits when it has none of its own), and what it points at. A thesession.org link can
+	be moved to another tune or setting (reusing the 🔍 search); other links can be corrected, which
+	finds the provider again and refreshes the title preview. Playable recordings offer Trim.
+	Fields save when they change, like the edit modal.
 -->
 <script lang="ts">
+	import { goto } from '$app/navigation';
+	import { resolve } from '$app/paths';
 	import { hasKey } from '#lib/domain/derived.ts';
 	import { formatKey } from '#lib/domain/key.ts';
-	import { recordingTitle } from '#lib/domain/providers.ts';
-	import { updateClip, type ClipPatch } from '#lib/domain/recordings.ts';
+	import { PROVIDERS, isPlayable, openLinkOf, recordingTitle } from '#lib/domain/providers.ts';
+	import { relinkClip, updateClip, type ClipPatch } from '#lib/domain/recordings.ts';
+	import { tuneClipId } from '#lib/domain/thesession.ts';
 	import type { ClipId, PieceId } from '#lib/domain/types.ts';
+	import { detectLink } from '#lib/integrations/links.ts';
 	import { library } from '#lib/store/library.svelte.ts';
+	import { oembed } from '#lib/store/oembed.svelte.ts';
+	import { theSession } from '#lib/store/thesession.svelte.ts';
 	import KeyInput from './KeyInput.svelte';
+	import ProviderIcon from './ProviderIcon.svelte';
+	import TheSessionSearch from './TheSessionSearch.svelte';
+	import { sourceFromLink } from './recordings.ts';
 
 	let {
 		pieceId,
-		clipId,
-		lookedUpTitle,
-		onclose
-	}: { pieceId: PieceId; clipId: ClipId; lookedUpTitle?: string; onclose: () => void } = $props();
+		clipId: initialClipId,
+		onclose,
+		ontrim
+	}: {
+		pieceId: PieceId;
+		clipId: ClipId;
+		onclose: () => void;
+		/** Close this and open the trim editor on the (current) clip. */
+		ontrim?: (clipId: ClipId) => void;
+	} = $props();
 
+	const uid = $props.id();
 	let dialog: HTMLDialogElement;
+	// Relinking to another thesession tune replaces the link's clip (its id is the tune's).
+	// svelte-ignore state_referenced_locally
+	let clipId = $state(initialClipId);
 	const piece = $derived(library.doc?.pieces[pieceId]);
 	const clip = $derived(piece?.clips[clipId]);
 	const source = $derived(clip ? library.doc?.sources[clip.sourceId] : undefined);
-	const pieceKey = $derived(piece && library.index ? library.index.effectiveKey(piece) : undefined);
+	const index = $derived(library.index);
+	const pieceKey = $derived(piece && index ? index.effectiveKey(piece) : undefined);
+	const pieceNotes = $derived(piece && index ? index.effectiveFirstNotes(piece) : undefined);
+	const lookedUp = $derived(source ? oembed.lookup(source)?.title : undefined);
+
+	const thesession = $derived(piece?.external?.thesession);
+	/** This clip is the piece's link to its thesession tune. */
+	const tuneLink = $derived(
+		thesession?.tuneId !== undefined && clipId === tuneClipId(thesession.tuneId)
+			? thesession.tuneId
+			: undefined
+	);
+	const tuneData = $derived(tuneLink !== undefined ? theSession.tune(tuneLink) : undefined);
+	const tuneName = $derived(tuneData?.data?.name ?? piece?.title ?? `tune ${tuneLink}`);
+	const settingNumber = $derived.by(() => {
+		const settings = tuneData?.data?.settings;
+		const i = settings?.findIndex((s) => s.id === thesession?.settingId) ?? -1;
+		return i >= 0 ? i + 1 : undefined;
+	});
+	/** A link that can be corrected by pasting another (not files, nor the tune or set link). */
+	const editableLink = $derived(
+		!!source &&
+			tuneLink === undefined &&
+			!clipId.startsWith('thesession:set:') &&
+			!['upload', 'gdrive', 'grecorder'].includes(source.provider)
+	);
+	const openHref = $derived(source ? openLinkOf(source) : undefined);
 
 	// svelte-ignore state_referenced_locally
 	let title = $state(clip?.title ?? '');
 	// svelte-ignore state_referenced_locally
 	let firstNotes = $state(clip?.firstNotes ?? '');
+	// svelte-ignore state_referenced_locally
+	let url = $state(source?.url ?? '');
+	let urlError = $state('');
+	let urlStatus = $state('');
+	let searching = $state<'tune' | 'setting'>();
 
 	$effect(() => {
 		dialog.showModal();
 	});
+
+	/** Re-reads the text fields after something other than typing changed the clip. */
+	function sync() {
+		const p = library.doc?.pieces[pieceId];
+		const ts = p?.external?.thesession;
+		// After moving to another tune, the link's clip has the new tune's id.
+		if (
+			p &&
+			!p.clips[clipId] &&
+			clipId.startsWith('thesession:tune:') &&
+			ts?.tuneId !== undefined
+		) {
+			clipId = tuneClipId(ts.tuneId);
+		}
+		const c = p?.clips[clipId];
+		title = c?.title ?? '';
+		firstNotes = c?.firstNotes ?? '';
+		url = (c && library.doc?.sources[c.sourceId]?.url) ?? '';
+	}
 
 	function save(patch: ClipPatch) {
 		if (clip) library.change((d) => updateClip(d, pieceId, clipId, patch));
@@ -53,51 +125,168 @@
 		pendingKey = undefined;
 	}
 
-	function close() {
+	function flushText() {
 		flushKey();
-		if (title !== (clip?.title ?? '')) save({ title });
-		if (firstNotes !== (clip?.firstNotes ?? '')) save({ firstNotes });
+		if (!clip) return;
+		if (title !== (clip.title ?? '')) save({ title });
+		if (firstNotes !== (clip.firstNotes ?? '')) save({ firstNotes });
+	}
+
+	function updateLink(e: SubmitEvent) {
+		e.preventDefault();
+		urlError = '';
+		urlStatus = '';
+		const link = detectLink(url);
+		if (!link) {
+			urlError = url.trim() ? 'That doesn’t look like a link.' : 'Paste a link first.';
+			return;
+		}
+		const changed = library.change((d) =>
+			relinkClip(d, pieceId, clipId, sourceFromLink(link), { start: link.start })
+		);
+		url = link.url;
+		urlStatus = changed
+			? `Now linked to ${PROVIDERS[link.provider].label}.`
+			: 'That’s the same link.';
+	}
+
+	function close() {
+		flushText();
 		onclose();
+	}
+
+	async function leaveTo(id: PieceId) {
+		dialog.close();
+		await goto(resolve('/(main)/piece/[id]', { id }));
 	}
 </script>
 
-<dialog bind:this={dialog} onclose={close} aria-labelledby="clip-heading">
+<dialog bind:this={dialog} onclose={close} aria-labelledby="{uid}-heading">
 	{#if piece && clip && source}
 		<div class="sheet">
 			<header>
-				<h2 id="clip-heading">Recording details</h2>
+				<h2 id="{uid}-heading">Edit recording</h2>
 				<button type="button" onclick={() => dialog.close()}>Done</button>
 			</header>
+
+			<p class="provider">
+				<ProviderIcon provider={source.provider} />
+				<span>{PROVIDERS[source.provider].label}</span>
+				{#if openHref}
+					<!-- eslint-disable-next-line svelte/no-navigation-without-resolve -->
+					<a href={openHref} target="_blank" rel="noopener noreferrer">Open link ↗</a>
+				{/if}
+			</p>
+
+			{#if tuneLink !== undefined}
+				<div class="field" role="group" aria-labelledby="{uid}-tune">
+					<span class="label" id="{uid}-tune">Linked tune</span>
+					<p data-testid="linked-tune">
+						{tuneName}{settingNumber !== undefined
+							? `, setting ${settingNumber}`
+							: thesession?.settingId !== undefined
+								? `, setting ${thesession.settingId}`
+								: ''}
+					</p>
+					{#if searching}
+						{#key searching}
+							<TheSessionSearch
+								{pieceId}
+								initialQuery={piece.title ?? ''}
+								isNew={false}
+								settingsOf={searching === 'setting'
+									? { tuneId: tuneLink, name: tuneName }
+									: undefined}
+								beforeApply={flushText}
+								onapplied={sync}
+								onclose={() => (searching = undefined)}
+								onleave={leaveTo}
+							/>
+						{/key}
+					{:else}
+						<div class="buttons">
+							<button type="button" class="btn-quiet" onclick={() => (searching = 'tune')}
+								>Change tune…</button
+							>
+							<button type="button" class="btn-quiet" onclick={() => (searching = 'setting')}
+								>Change setting…</button
+							>
+						</div>
+					{/if}
+				</div>
+			{:else if editableLink}
+				<form class="field" onsubmit={updateLink} novalidate>
+					<label for="{uid}-url">Link</label>
+					<div class="row">
+						<input
+							id="{uid}-url"
+							type="url"
+							inputmode="url"
+							autocomplete="off"
+							spellcheck="false"
+							bind:value={url}
+							oninput={() => {
+								urlError = '';
+								urlStatus = '';
+							}}
+						/>
+						<button type="submit" class="btn-quiet">Update link</button>
+					</div>
+					{#if urlError}<p class="error" role="alert">{urlError}</p>{/if}
+					{#if urlStatus}<p class="muted small" role="status">{urlStatus}</p>{/if}
+				</form>
+			{/if}
+
 			<div class="field">
-				<label for="clip-title">Title</label>
+				<label for="{uid}-title">Title</label>
 				<input
-					id="clip-title"
+					id="{uid}-title"
 					type="text"
 					autocomplete="off"
-					placeholder={recordingTitle({}, source, lookedUpTitle)}
+					placeholder={recordingTitle({}, source, lookedUp)}
 					bind:value={title}
 					onchange={() => save({ title })}
 				/>
 			</div>
+
 			{#if hasKey(piece)}
 				<p class="muted small">
-					Key and first notes as played in this recording, if they differ from the tune’s ({pieceKey
-						? formatKey(pieceKey)
-						: 'no key'}{piece.firstNotes ? `, ${piece.firstNotes}` : ''}).
+					{#if tuneLink !== undefined}
+						Key and first notes of the linked setting. The {piece.kind} shows them unless it has its own.
+					{:else}
+						Key and first notes as played in this recording, if they differ from the {piece.kind}’s
+						({pieceKey ? formatKey(pieceKey) : 'no key'}{pieceNotes ? `, ${pieceNotes}` : ''}).
+					{/if}
 				</p>
-				<KeyInput id="clip-key" value={clip.key} onchange={queueKey} />
+				{#key clipId}
+					<KeyInput id="{uid}-key" value={clip.key} onchange={queueKey} />
+				{/key}
 				<div class="field">
-					<label for="clip-notes">First notes (ABC)</label>
+					<label for="{uid}-notes">First notes (ABC)</label>
 					<input
-						id="clip-notes"
+						id="{uid}-notes"
 						class="abc"
 						type="text"
 						autocomplete="off"
 						spellcheck="false"
-						placeholder={piece.firstNotes ?? ''}
+						placeholder={tuneLink === undefined ? (pieceNotes ?? '') : ''}
 						bind:value={firstNotes}
 						onchange={() => save({ firstNotes })}
 					/>
+				</div>
+			{/if}
+
+			{#if ontrim && isPlayable(source)}
+				<div class="buttons">
+					<button
+						type="button"
+						class="btn-quiet"
+						onclick={() => {
+							const id = clipId;
+							dialog.close();
+							ontrim(id);
+						}}>Trim…</button
+					>
 				</div>
 			{/if}
 		</div>
@@ -107,6 +296,7 @@
 <style>
 	dialog {
 		width: min(32rem, calc(100% - 2 * var(--space-3)));
+		max-height: calc(100dvh - 2 * var(--space-3));
 		padding: 0;
 		border: 1px solid var(--color-border);
 		border-radius: var(--radius);
@@ -137,13 +327,42 @@
 		font-size: 1.25rem;
 	}
 
+	p {
+		margin: 0;
+	}
+
+	.provider {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: var(--space-2);
+		color: var(--color-muted);
+	}
+
+	.provider a {
+		margin-left: auto;
+	}
+
 	.field {
 		display: grid;
 		gap: var(--space-1);
 	}
 
-	label {
+	label,
+	.label {
 		font-weight: 600;
+	}
+
+	.row,
+	.buttons {
+		display: flex;
+		flex-wrap: wrap;
+		gap: var(--space-2);
+	}
+
+	.row input {
+		flex: 1;
+		min-width: 0;
 	}
 
 	.abc {
@@ -151,7 +370,10 @@
 	}
 
 	.small {
-		margin: 0;
 		font-size: 0.875rem;
+	}
+
+	.error {
+		color: var(--color-danger);
 	}
 </style>

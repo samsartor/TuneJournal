@@ -3,21 +3,24 @@ import { expect, type Page, type TestInfo } from '@playwright/test';
 import { isMobile } from './helpers';
 
 const FIXTURES = new URL('../src/lib/integrations/fixtures/', import.meta.url);
-const fixture = (name: string) => readFileSync(new URL(name, FIXTURES), 'utf8');
+export const fixture = (name: string) => readFileSync(new URL(name, FIXTURES), 'utf8');
 
 const EMPTY_SEARCH = JSON.stringify({ format: 'json', page: 1, pages: 0, total: 0, tunes: [] });
 
 /**
  * Serves thesession.org from the recorded fixtures, so tests never reach the real site. Anything
- * without a fixture gets a 404. Returns the list of requested paths.
+ * without a fixture gets a 404. `overrides` replaces the body for a path. Returns the list of
+ * requested paths.
  */
-export async function mockTheSession(page: Page) {
+export async function mockTheSession(page: Page, overrides: Record<string, string> = {}) {
 	const requests: string[] = [];
 	await page.route('https://thesession.org/**', async (route) => {
 		const url = new URL(route.request().url());
 		requests.push(url.pathname + url.search);
 		let body: string | undefined;
-		if (url.pathname === '/tunes/search') {
+		if (url.pathname in overrides) {
+			body = overrides[url.pathname];
+		} else if (url.pathname === '/tunes/search') {
 			body = /cooley/i.test(url.searchParams.get('q') ?? '')
 				? fixture('search-cooley.json')
 				: EMPTY_SEARCH;

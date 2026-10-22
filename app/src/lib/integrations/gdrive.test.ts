@@ -1,15 +1,20 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
 	APP_FOLDER,
+	DEVICE_CONFIG_KEY,
 	DriveClient,
 	DriveError,
 	FOLDER_MIME,
 	createFolderRequest,
 	downloadRequest,
 	driveFileUrl,
+	configProblems,
 	findFolderRequest,
 	isConfigured,
+	mergeConfig,
 	quoteQuery,
+	readDeviceConfig,
+	writeDeviceConfig,
 	uploadRequest,
 	type TokenSource
 } from './gdrive';
@@ -140,5 +145,55 @@ describe('DriveClient', () => {
 		const client = new DriveClient(tokens(), fetcher);
 		await expect(client.ensureFolder()).rejects.toThrow(DriveError);
 		await expect(client.ensureFolder()).resolves.toBe('OLD');
+	});
+});
+
+describe('device-local Drive settings', () => {
+	function memoryStorage(): Storage {
+		const data = new Map<string, string>();
+		return {
+			get length() {
+				return data.size;
+			},
+			clear: () => data.clear(),
+			getItem: (k) => data.get(k) ?? null,
+			key: (i) => [...data.keys()][i] ?? null,
+			removeItem: (k) => void data.delete(k),
+			setItem: (k, v) => void data.set(k, String(v))
+		};
+	}
+
+	const BUILD = { clientId: 'build.apps.googleusercontent.com', apiKey: 'AIzaBuild', appId: '111' };
+
+	it('saves trimmed values on the device and reads them back', () => {
+		const storage = memoryStorage();
+		expect(readDeviceConfig(storage)).toEqual({});
+		const saved = writeDeviceConfig(
+			{ clientId: '  mine.apps.googleusercontent.com ', apiKey: '', appId: '222' },
+			storage
+		);
+		expect(saved).toEqual({ clientId: 'mine.apps.googleusercontent.com', appId: '222' });
+		expect(readDeviceConfig(storage)).toEqual(saved);
+		expect(JSON.parse(storage.getItem(DEVICE_CONFIG_KEY)!)).toEqual(saved);
+		// All blank forgets them.
+		writeDeviceConfig({}, storage);
+		expect(storage.getItem(DEVICE_CONFIG_KEY)).toBeNull();
+		// Junk in storage is ignored.
+		storage.setItem(DEVICE_CONFIG_KEY, '{not json');
+		expect(readDeviceConfig(storage)).toEqual({});
+	});
+
+	it('device values take precedence over the build’s, field by field', () => {
+		expect(mergeConfig({ appId: '222' }, BUILD)).toEqual({ ...BUILD, appId: '222' });
+		expect(mergeConfig({}, BUILD)).toEqual(BUILD);
+		expect(isConfigured(mergeConfig({ clientId: 'x' }, {}))).toBe(false);
+		expect(isConfigured(mergeConfig({ clientId: 'x', apiKey: 'y', appId: '1' }, {}))).toBe(true);
+	});
+
+	it('flags likely typos', () => {
+		expect(configProblems(BUILD)).toEqual([]);
+		expect(configProblems({ clientId: 'abc', appId: 'my-project', apiKey: 'AI za' })).toHaveLength(
+			3
+		);
 	});
 });

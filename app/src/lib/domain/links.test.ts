@@ -5,7 +5,7 @@ import * as Automerge from '@automerge/automerge';
 import { buildIndex } from './derived';
 import { emptyLibrary } from './library';
 import { addTag, createPiece, logPractice, updatePiece } from './ops';
-import { addRecording, orphanSources } from './recordings';
+import { addRecording, orphanSources, updateClip } from './recordings';
 import {
 	CHILD_KIND,
 	addChild,
@@ -434,6 +434,64 @@ describe('effective practice and inheritance', () => {
 		h.change((l) => updatePiece(l, part, { skill: null, key: null }));
 		index = buildIndex(h.lib);
 		expect(index.effectiveSkill(index.get(part)!)).toBe(3);
+	});
+
+	it('key and first notes fall back to the first recording that has them, then the Tune', () => {
+		const { h, tune, part } = hierarchy();
+		const yt = { provider: 'youtube' as const, url: 'https://youtu.be/x', externalId: 'x' };
+		const sp = { provider: 'spotify' as const, url: 'https://sp/y', externalId: 'track:y' };
+		const { clipId: first } = h.change((l) => addRecording(l, tune, yt));
+		const { clipId: second } = h.change((l) =>
+			addRecording(l, tune, sp, { key: 'Bmin', firstNotes: 'B2 dB' })
+		);
+		let index = buildIndex(h.lib);
+		let t = index.get(tune)!;
+		// The first clip has nothing, so the second one's values show.
+		expect(index.keyOf(t)).toMatchObject({
+			value: 'B minor',
+			origin: { from: 'clip', clip: { id: second } }
+		});
+		expect(index.effectiveFirstNotes(t)).toBe('B2 dB');
+		expect(index.keys).toContain('B minor');
+
+		// The first clip in order wins once it has a value.
+		h.change((l) => updateClip(l, tune, first, { key: 'Ador' }));
+		index = buildIndex(h.lib);
+		t = index.get(tune)!;
+		expect(index.effectiveKey(t)).toBe('A dorian');
+		expect(index.effectiveFirstNotes(t)).toBe('B2 dB');
+		// A clip's own key shows on that clip; others use the piece's effective key.
+		expect(index.clipKey(t, h.lib.pieces[tune].clips[second])).toBe('B minor');
+
+		// A Part with nothing of its own: its own clips first, then its Tune's effective key. First
+		// notes never come from the Tune.
+		let p = index.get(part)!;
+		expect(index.keyOf(p)).toMatchObject({ value: 'A dorian', origin: { from: 'tune' } });
+		expect(index.effectiveFirstNotes(p)).toBeUndefined();
+		const { clipId: partClip } = h.change((l) =>
+			addRecording(l, part, { provider: 'upload', url: '' }, { key: 'E dor', firstNotes: 'e2' })
+		);
+		index = buildIndex(h.lib);
+		p = index.get(part)!;
+		expect(index.keyOf(p)).toMatchObject({
+			value: 'E dorian',
+			origin: { from: 'clip', clip: { id: partClip } }
+		});
+		expect(index.effectiveFirstNotes(p)).toBe('e2');
+
+		// The piece's own values win over everything.
+		h.change((l) => updatePiece(l, tune, { key: 'G', firstNotes: 'GABc' }));
+		index = buildIndex(h.lib);
+		t = index.get(tune)!;
+		expect(index.keyOf(t)).toEqual({ value: 'G major', origin: { from: 'own' } });
+		expect(index.firstNotesOf(t)).toEqual({ value: 'GABc', origin: { from: 'own' } });
+		expect(index.clipFirstNotes(t, h.lib.pieces[tune].clips[first])).toBe('GABc');
+
+		// Sets and sessions have neither, whatever their recordings say.
+		const set = make(h, 'set', 'A set', 20);
+		h.change((l) => addRecording(l, set, sp, { key: 'Dmaj' }));
+		index = buildIndex(h.lib);
+		expect(index.effectiveKey(index.get(set)!)).toBeUndefined();
 	});
 
 	it('filters and sorts by the effective values', async () => {

@@ -30,25 +30,13 @@
 </script>
 
 <div class="skill">
-	<div class="row">
+	<!-- The value and its actions share the header row, so the slider's width never depends on the
+	value: nothing appears beside it mid-drag. -->
+	<div class="head">
 		<label for={id}>Skill</label>
 		<output for={id} class:muted={!skill}
 			>{label}{#if isInherited}<span class="from">{` · from ${inherited!.from}`}</span>{/if}</output
 		>
-	</div>
-	<div class="row">
-		<input
-			{id}
-			type="range"
-			min="0"
-			max="5"
-			step="1"
-			{value}
-			oninput={input}
-			aria-valuetext={valueText}
-			class:inherited={isInherited}
-			list="{id}-ticks"
-		/>
 		{#if skill && inherited}
 			<button type="button" class="btn-quiet clear" onclick={() => onchange(null)}>
 				Use {inherited.from}’s
@@ -59,6 +47,18 @@
 			</button>
 		{/if}
 	</div>
+	<input
+		{id}
+		type="range"
+		min="0"
+		max="5"
+		step="1"
+		{value}
+		oninput={input}
+		aria-valuetext={valueText}
+		class:inherited={isInherited}
+		list="{id}-ticks"
+	/>
 	<datalist id="{id}-ticks">
 		{#each [0, 1, 2, 3, 4, 5] as n (n)}<option value={n}></option>{/each}
 	</datalist>
@@ -70,11 +70,18 @@
 		gap: var(--space-1);
 	}
 
-	.row {
+	.head {
 		display: flex;
+		flex-wrap: wrap;
 		align-items: center;
-		justify-content: space-between;
-		gap: var(--space-2);
+		gap: var(--space-1) var(--space-2);
+		/* As tall as the button, so the row doesn't grow when it appears. */
+		min-height: var(--touch);
+	}
+
+	output {
+		flex: 1;
+		min-width: 0;
 	}
 
 	label {
@@ -82,8 +89,8 @@
 	}
 
 	input {
-		flex: 1;
-		min-width: 0;
+		width: 100%;
+		margin: 0;
 	}
 
 	input.inherited {
@@ -95,7 +102,8 @@
 	}
 
 	.clear {
-		font-size: 0.875rem;
 		flex: none;
+		font-size: 0.875rem;
+		margin-left: auto;
 	}
 </style>

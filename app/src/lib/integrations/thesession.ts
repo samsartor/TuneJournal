@@ -162,9 +162,40 @@ function tuneSummary(v: unknown): TuneSummary {
 	};
 }
 
+/**
+ * Keeps the first item for each id. thesession.org's lists can repeat an entry: `/tunes/4428/sets`
+ * lists set 150333 twice (once per time the tune appears in it), and the UI keys lists by id.
+ */
+export function uniqueById<T extends { id: number }>(items: readonly T[]): T[] {
+	const seen = new Set<number>();
+	return items.filter((item) => {
+		if (seen.has(item.id)) return false;
+		seen.add(item.id);
+		return true;
+	});
+}
+
+/** Drops repeated sets, also from data cached before parseSets deduped them. */
+export function dedupeSets(sets: TuneSets): TuneSets {
+	const unique = uniqueById(sets.sets);
+	return unique.length === sets.sets.length ? sets : { ...sets, sets: unique };
+}
+
+/** Drops repeated hits, also from data cached before parseSearch deduped them. */
+export function dedupeSearch(results: SearchResults): SearchResults {
+	const unique = uniqueById(results.tunes);
+	return unique.length === results.tunes.length ? results : { ...results, tunes: unique };
+}
+
+/** Drops repeated settings, also from data cached before parseTune deduped them. */
+export function dedupeTune(tune: Tune): Tune {
+	const unique = uniqueById(tune.settings);
+	return unique.length === tune.settings.length ? tune : { ...tune, settings: unique };
+}
+
 export function parseSearch(json: unknown): SearchResults {
 	const j = obj(json, 'search');
-	return {
+	return dedupeSearch({
 		...page(j),
 		tunes: arr(j.tunes, 'tunes').map((v) => {
 			const hit: SearchHit = tuneSummary(v);
@@ -172,12 +203,12 @@ export function parseSearch(json: unknown): SearchResults {
 			if (typeof alias === 'string' && alias) hit.alias = alias;
 			return hit;
 		})
-	};
+	});
 }
 
 export function parseTune(json: unknown): Tune {
 	const j = obj(json, 'tune');
-	return {
+	return dedupeTune({
 		...tuneSummary(j),
 		aliases: arr(j.aliases, 'aliases').map((a) => str(a, 'alias')),
 		tunebooks: num(j.tunebooks, 'tunebooks'),
@@ -194,14 +225,14 @@ export function parseTune(json: unknown): Tune {
 				date: str(s.date, 'setting.date')
 			};
 		})
-	};
+	});
 }
 
 const TUNE_URL = /\/tunes\/(\d+)/;
 
 export function parseSets(json: unknown): TuneSets {
 	const j = obj(json, 'sets');
-	return {
+	return dedupeSets({
 		...page(j),
 		sets: arr(j.sets, 'sets').map((v) => {
 			const s = obj(v, 'set');
@@ -228,7 +259,7 @@ export function parseSets(json: unknown): TuneSets {
 				})
 			};
 		})
-	};
+	});
 }
 
 export function parseRecordings(json: unknown): TuneRecordings {
@@ -236,20 +267,22 @@ export function parseRecordings(json: unknown): TuneRecordings {
 	return {
 		id: num(j.id, 'id'),
 		name: str(j.name, 'name'),
-		recordings: arr(j.recordings, 'recordings').map((v) => {
-			const r = obj(v, 'recording');
-			const a = obj(r.artist, 'artist');
-			return {
-				id: num(r.id, 'recording.id'),
-				name: str(r.name, 'recording.name'),
-				url: str(r.url, 'recording.url'),
-				artist: {
-					id: num(a.id, 'artist.id'),
-					name: str(a.name, 'artist.name'),
-					url: str(a.url, 'artist.url')
-				}
-			};
-		}),
+		recordings: uniqueById(
+			arr(j.recordings, 'recordings').map((v) => {
+				const r = obj(v, 'recording');
+				const a = obj(r.artist, 'artist');
+				return {
+					id: num(r.id, 'recording.id'),
+					name: str(r.name, 'recording.name'),
+					url: str(r.url, 'recording.url'),
+					artist: {
+						id: num(a.id, 'artist.id'),
+						name: str(a.name, 'artist.name'),
+						url: str(a.url, 'artist.url')
+					}
+				};
+			})
+		),
 		recordedWith: arr(j.recorded_with ?? [], 'recorded_with').map((v) => {
 			const t = obj(v, 'recorded_with');
 			return {

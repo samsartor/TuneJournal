@@ -3,6 +3,7 @@ import * as Automerge from '@automerge/automerge';
 import { buildIndex } from './derived';
 import { emptyLibrary } from './library';
 import { addTag, createPiece, updatePiece } from './ops';
+import { updateClip } from './recordings';
 import { linkId, sortLinks } from './relations';
 import {
 	applyTheSessionSetting,
@@ -14,7 +15,7 @@ import {
 	unlinkTheSession,
 	type TheSessionSetInfo
 } from './thesession';
-import type { Library, PieceId } from './types';
+import type { ClipId, Library, PieceId } from './types';
 
 interface Harness {
 	readonly lib: Library;
@@ -130,36 +131,72 @@ describe.each([
 	});
 
 	describe('applyTheSessionSetting', () => {
-		it('stores the setting and fills key and first notes', () => {
+		const TUNE_CLIP = 'thesession:tune:1' as ClipId;
+
+		it('stores the setting and writes key and first notes to the thesession recording', () => {
 			const { h, id, piece } = withPiece();
 			h.change((l) => linkTheSessionTune(l, id, COOLEYS));
-			h.change((l) =>
+			const clipId = h.change((l) =>
 				applyTheSessionSetting(l, id, {
 					settingId: 1,
 					key: 'Edorian',
 					firstNotes: 'D2 | EBBA B2 EB | B2 AB dBAG'
 				})
 			);
-			expect(piece()).toMatchObject({
+			expect(clipId).toBe(TUNE_CLIP);
+			expect(piece().clips[TUNE_CLIP]).toMatchObject({
 				key: 'E dorian',
-				firstNotes: 'D2 | EBBA B2 EB | B2 AB dBAG',
-				external: { thesession: { tuneId: 1, settingId: 1 } }
+				firstNotes: 'D2 | EBBA B2 EB | B2 AB dBAG'
 			});
+			expect(piece().external).toEqual({ thesession: { tuneId: 1, settingId: 1 } });
+			// The piece keeps no key of its own; it inherits the recording's (PLAN.md §5).
+			expect('key' in piece()).toBe(false);
+			expect('firstNotes' in piece()).toBe(false);
+			const index = buildIndex(h.lib);
+			expect(index.effectiveKey(piece())).toBe('E dorian');
+			expect(index.effectiveFirstNotes(piece())).toBe('D2 | EBBA B2 EB | B2 AB dBAG');
+			expect(index.keyOf(piece())?.origin).toMatchObject({ from: 'clip', clip: { id: TUNE_CLIP } });
+			expect(hasUndefined(h.lib)).toBe(false);
 		});
 
-		it('only fills blanks unless overwrite is set', () => {
+		it('only fills the recording’s blanks unless overwrite is set, never the piece’s', () => {
 			const { h, id, piece } = withPiece();
-			h.change((l) => updatePiece(l, id, { key: 'D major' }));
+			h.change((l) => {
+				updatePiece(l, id, { key: 'D major', firstNotes: 'ABC' });
+				linkTheSessionTune(l, id, COOLEYS);
+				updateClip(l, id, TUNE_CLIP, { key: 'A dorian' });
+			});
 			h.change((l) =>
 				applyTheSessionSetting(l, id, { settingId: 2, key: 'Eminor', firstNotes: 'F|CG' })
 			);
-			expect(piece().key).toBe('D major');
-			expect(piece().firstNotes).toBe('F|CG');
+			expect(piece().clips[TUNE_CLIP]).toMatchObject({ key: 'A dorian', firstNotes: 'F|CG' });
 			h.change((l) =>
 				applyTheSessionSetting(l, id, { settingId: 3, key: 'Edor' }, { overwrite: true })
 			);
-			expect(piece().key).toBe('E dorian');
+			expect(piece().clips[TUNE_CLIP].key).toBe('E dorian');
+			// The new setting has no first notes, so the old setting's are dropped.
+			expect('firstNotes' in piece().clips[TUNE_CLIP]).toBe(false);
 			expect(piece().external?.thesession?.settingId).toBe(3);
+			// Values the piece already had (from the old autofill, say) stay as they are.
+			expect(piece()).toMatchObject({ key: 'D major', firstNotes: 'ABC' });
+		});
+
+		it('re-adds a removed thesession recording, and only stores the id without a tune', () => {
+			const { h, id, piece } = withPiece();
+			h.change((l) => {
+				linkTheSessionTune(l, id, COOLEYS);
+				delete l.pieces[id].clips[TUNE_CLIP];
+			});
+			h.change((l) => applyTheSessionSetting(l, id, { settingId: 1, key: 'Edor' }));
+			expect(piece().clips[TUNE_CLIP]).toMatchObject({ key: 'E dorian' });
+
+			const other = withPiece();
+			const result = other.h.change((l) =>
+				applyTheSessionSetting(l, other.id, { settingId: 9, key: 'Edor' })
+			);
+			expect(result).toBeUndefined();
+			expect(other.piece().external).toEqual({ thesession: { settingId: 9 } });
+			expect(other.piece().clips).toEqual({});
 		});
 	});
 
@@ -167,6 +204,7 @@ describe.each([
 		const { h, id, piece } = withPiece();
 		h.change((l) => {
 			linkTheSessionTune(l, id, COOLEYS);
+			updatePiece(l, id, { key: 'E dorian' });
 			applyTheSessionSetting(l, id, { settingId: 1, key: 'Edor' });
 		});
 		expect(h.change((l) => unlinkTheSession(l, id))).toBe(true);
@@ -209,10 +247,12 @@ describe.each([
 			expect(kesh).toMatchObject({
 				kind: 'tune',
 				title: 'The Kesh',
-				key: 'G major',
 				tags: { Jig: true },
 				external: { thesession: { tuneId: 55, settingId: 55 } }
 			});
+			// The set's key goes on the new tune's thesession recording, which the tune inherits.
+			expect(kesh.clips['thesession:tune:55' as ClipId]).toMatchObject({ key: 'G major' });
+			expect(buildIndex(h.lib).effectiveKey(kesh)).toBe('G major');
 			// The existing piece keeps its own title.
 			expect(h.lib.pieces[cooleys].title).toBe('My Cooley’s');
 			expect(pieceForSet(h.lib, 153106)?.id).toBe(result.setId);

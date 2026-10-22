@@ -43,7 +43,6 @@
 	let last = $state<{ name: string; start: number; end: number }>();
 
 	const current = $derived(clips.find((c) => c.clip.id === clipId));
-	const playback = $derived(current ? playbackOf(current.source) : undefined);
 
 	onMount(() => dialog.showModal());
 
@@ -57,21 +56,23 @@
 		blob = undefined;
 		if (!c) return;
 		let stale = false;
-		(async () => {
+		// Untracked: opening reads (and the editor then changes) the player's state, which mustn't
+		// re-run this.
+		untrack(async () => {
 			try {
-				if (playbackOf(c.source) === 'youtube') {
-					await player.open(piece.id, c.clip.id, { autoplay: false });
-					if (player.error) throw new Error(player.error);
-				} else {
-					if (player.playing) player.pause();
-					const b = await audioFiles.blobFor(c.source);
+				// The editor's transport plays through the global player, paused until asked.
+				await player.open(piece.id, c.clip.id, { autoplay: false });
+				if (player.error) throw new Error(player.error);
+				if (playbackOf(c.source) === 'file') {
+					// Only for drawing the waveform; the editor still works without it.
+					const b = await audioFiles.blobFor(c.source).catch(() => undefined);
 					if (!stale) blob = b;
 				}
 				if (!stale) ready = true;
 			} catch (e) {
 				if (!stale) error = e instanceof Error ? e.message : String(e);
 			}
-		})();
+		});
 		return () => (stale = true);
 	});
 
@@ -117,6 +118,7 @@
 	}
 
 	function close() {
+		if (current && player.isCurrent(piece.id, current.clip.id) && player.playing) player.pause();
 		player.endPreview();
 		onclose();
 	}
@@ -182,31 +184,15 @@
 					or changed.
 				</p>
 				{#key `${clipId}:${round}`}
-					{#if playback === 'youtube'}
-						<TrimEditor
-							duration={player.duration}
-							start={nextStart ?? current.clip.start}
-							end={nextStart === undefined ? current.clip.end : undefined}
-							currentTime={player.time}
-							onpreview={({ start, end }) => player.preview(start, end)}
-							onstoppreview={() => {
-								player.pause();
-								player.endPreview();
-							}}
-							onsave={split}
-							oncancel={() => dialog.close()}
-							saveLabel="Split off {kindLabel}"
-						/>
-					{:else}
-						<TrimEditor
-							{blob}
-							start={nextStart ?? current.clip.start}
-							end={nextStart === undefined ? current.clip.end : undefined}
-							onsave={split}
-							oncancel={() => dialog.close()}
-							saveLabel="Split off {kindLabel}"
-						/>
-					{/if}
+					<TrimEditor
+						waveform={blob}
+						duration={current.source.durationSec}
+						start={nextStart ?? current.clip.start}
+						end={nextStart === undefined ? current.clip.end : undefined}
+						onsave={split}
+						oncancel={() => dialog.close()}
+						saveLabel="Split off {kindLabel}"
+					/>
 				{/key}
 			{/if}
 		{/if}

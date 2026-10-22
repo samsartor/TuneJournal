@@ -1,7 +1,8 @@
 <!--
-	Trims one clip: the waveform editor for file sources, the slider for YouTube. Saving sets the
-	clip's start/end; the source is never changed. A trim covering the whole recording is stored as
-	no trim.
+	Trims one clip, with the trim editor's own transport (the clip plays through the global player,
+	whose bar is behind this dialog): a waveform for file sources, a timeline for YouTube. Saving
+	sets the clip's start/end; the source is never changed. A trim covering the whole recording is
+	stored as no trim.
 -->
 <script lang="ts">
 	import { onMount } from 'svelte';
@@ -35,13 +36,15 @@
 		dialog.showModal();
 		if (!source || !clip) return;
 		try {
-			if (kind === 'youtube') {
-				// The slider previews through the player, so load the clip there (paused).
-				await player.open(pieceId, clipId, { autoplay: false });
-				if (player.error) throw new Error(player.error);
-			} else {
-				if (player.playing) player.pause();
-				blob = await audioFiles.blobFor(source);
+			// The editor's transport plays through the global player, paused until asked.
+			await player.open(pieceId, clipId, { autoplay: false });
+			if (player.error) throw new Error(player.error);
+			if (kind === 'file') {
+				// Only for drawing the waveform; the editor still works without it.
+				blob = await audioFiles.blobFor(source).catch((e) => {
+					console.warn('No waveform', e);
+					return undefined;
+				});
 			}
 			ready = true;
 		} catch (e) {
@@ -66,6 +69,7 @@
 	}
 
 	function close() {
+		if (player.isCurrent(pieceId, clipId) && player.playing) player.pause();
 		player.endPreview();
 		onclose();
 	}
@@ -84,23 +88,10 @@
 			<button type="button" class="btn-quiet" onclick={() => dialog.close()}>Close</button>
 		{:else if !ready || !clip}
 			<p class="muted">Loading…</p>
-		{:else if kind === 'youtube'}
-			<TrimEditor
-				duration={player.duration}
-				start={clip.start}
-				end={clip.end}
-				currentTime={player.time}
-				onpreview={({ start, end }) => player.preview(start, end)}
-				onstoppreview={() => {
-					player.pause();
-					player.endPreview();
-				}}
-				onsave={save}
-				oncancel={() => dialog.close()}
-			/>
 		{:else}
 			<TrimEditor
-				{blob}
+				waveform={blob}
+				duration={source?.durationSec}
 				start={clip.start}
 				end={clip.end}
 				onsave={save}

@@ -44,7 +44,12 @@
 
 		.list,
 		.pane {
+			/* Positioned, so absolutely positioned descendants (.visually-hidden labels, the hidden
+			   file input) are laid out inside the pane that scrolls them. Otherwise their containing
+			   block is the page, and the page itself scrolls past the end of the layout. */
+			position: relative;
 			overflow-y: auto;
+			overscroll-behavior: contain;
 		}
 
 		.list {

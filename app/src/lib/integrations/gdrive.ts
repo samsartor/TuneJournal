@@ -1,6 +1,7 @@
 // Google Drive (PLAN.md §7): GIS token client + Picker + Drive REST, all from the browser with the
 // non-sensitive `drive.file` scope, so the app sees only files the user picks or the app creates.
-// Configured by PUBLIC_GOOGLE_{CLIENT_ID,API_KEY,APP_ID}; with any of them empty, the UI hides
+// Configured in Settings → Google Drive (saved on the device only), falling back to
+// PUBLIC_GOOGLE_{CLIENT_ID,API_KEY,APP_ID} from the build; with any of them missing, the UI hides
 // Drive. Google's scripts load on first use only.
 //
 // The request builders and DriveClient are pure apart from `fetch` and a token source, so they're
@@ -38,10 +39,76 @@ export function isConfigured(config: Partial<GoogleConfig>): config is GoogleCon
 	return !!(config.clientId && config.apiKey && config.appId);
 }
 
-/** The link stored on a Drive Source: opens the file in Drive. */
-export function driveFileUrl(fileId: string): string {
-	return `https://drive.google.com/file/d/${encodeURIComponent(fileId)}/view`;
+export const CONFIG_FIELDS = ['clientId', 'apiKey', 'appId'] as const;
+
+/** Device-local Drive settings (localStorage). Never synced: each device and origin has its own. */
+export const DEVICE_CONFIG_KEY = 'tunejournal.gdrive.config';
+
+/** Trimmed, without blanks. */
+export function cleanConfig(config: unknown): Partial<GoogleConfig> {
+	const raw = (config && typeof config === 'object' ? config : {}) as Record<string, unknown>;
+	const clean: Partial<GoogleConfig> = {};
+	for (const field of CONFIG_FIELDS) {
+		const value = typeof raw[field] === 'string' ? raw[field].trim() : '';
+		if (value) clean[field] = value;
+	}
+	return clean;
 }
+
+/** The settings saved on this device. */
+export function readDeviceConfig(storage = globalThis.localStorage): Partial<GoogleConfig> {
+	try {
+		return cleanConfig(JSON.parse(storage?.getItem(DEVICE_CONFIG_KEY) ?? '{}'));
+	} catch {
+		return {};
+	}
+}
+
+/** Saves (or, when everything is blank, forgets) this device's settings; returns what's saved. */
+export function writeDeviceConfig(
+	config: Partial<GoogleConfig>,
+	storage = globalThis.localStorage
+): Partial<GoogleConfig> {
+	const clean = cleanConfig(config);
+	try {
+		if (Object.keys(clean).length > 0) storage?.setItem(DEVICE_CONFIG_KEY, JSON.stringify(clean));
+		else storage?.removeItem(DEVICE_CONFIG_KEY);
+	} catch {
+		throw new Error('This browser won’t let TuneJournal save settings.');
+	}
+	return clean;
+}
+
+/** Device values win field by field; the build's values fill the rest. */
+export function mergeConfig(
+	device: Partial<GoogleConfig>,
+	build: Partial<GoogleConfig>
+): Partial<GoogleConfig> {
+	const merged: Partial<GoogleConfig> = {};
+	for (const field of CONFIG_FIELDS) {
+		const value = device[field]?.trim() || build[field]?.trim();
+		if (value) merged[field] = value;
+	}
+	return merged;
+}
+
+/** Likely typos, as warnings: Google's own errors for these are cryptic. */
+export function configProblems(config: Partial<GoogleConfig>): string[] {
+	const problems: string[] = [];
+	if (config.clientId && !/\.apps\.googleusercontent\.com$/.test(config.clientId)) {
+		problems.push('The client ID usually ends in “.apps.googleusercontent.com”.');
+	}
+	if (config.appId && !/^\d+$/.test(config.appId)) {
+		problems.push('The app ID is the project number: digits only.');
+	}
+	if (config.apiKey && /\s/.test(config.apiKey)) {
+		problems.push('The API key has spaces in it.');
+	}
+	return problems;
+}
+
+/** The link stored on a Drive Source: opens the file in Drive. */
+export { driveFileUrl } from '#lib/domain/providers.ts';
 
 // Request builders
 
@@ -243,7 +310,7 @@ export class GisTokenSource implements TokenSource {
 	#cached?: StoredToken;
 
 	constructor(
-		private readonly clientId: string,
+		readonly clientId: string,
 		private readonly now: () => number = Date.now
 	) {
 		this.#cached = readJson<StoredToken>(globalThis.sessionStorage, TOKEN_KEY);

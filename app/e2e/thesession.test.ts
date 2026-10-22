@@ -21,8 +21,16 @@ test('search fills title, type tag, link, key and first notes from a setting', a
 	await expect(dialog.getByText("“Cooley's” has 3 settings.")).toBeVisible();
 	await dialog.getByRole('button', { name: /^Setting 2, E min:/ }).click();
 
-	await expect(dialog.getByLabel('Key as text')).toHaveValue('E minor');
-	await expect(dialog.getByLabel(/First notes/)).toHaveValue('F | CGGC G2 CG | G2 FG BGFE');
+	// The setting's key and first notes go on the thesession recording; the tune inherits them.
+	await expect(dialog.getByLabel('Key as text')).toHaveValue('');
+	await expect(dialog.getByTestId('key-inherited')).toHaveText(
+		'Uses E min from thesession.org until you set one.'
+	);
+	await expect(dialog.getByLabel(/First notes/)).toHaveValue('');
+	await expect(dialog.getByLabel(/First notes/)).toHaveAttribute(
+		'placeholder',
+		'F | CGGC G2 CG | G2 FG BGFE'
+	);
 	await expect(dialog.getByRole('list', { name: 'Current tags' })).toHaveText(/Reel/);
 	await expect(
 		dialog.getByRole('link', { name: 'thesession.org tune 1, setting 12342 ↗' })
@@ -31,6 +39,10 @@ test('search fills title, type tag, link, key and first notes from a setting', a
 
 	// The detail view shows the link and what thesession.org knows about the tune.
 	const detail = page.locator('.detail');
+	await expect(detail.getByTestId('key')).toHaveText(/E min\s+from thesession\.org/);
+	await expect(detail.getByTestId('first-notes')).toHaveText(
+		/F \| CGGC G2 CG \| G2 FG BGFE\s+from thesession\.org/
+	);
 	await expect(detail.getByRole('link', { name: 'Open thesession.org (new tab)' })).toHaveAttribute(
 		'href',
 		'https://thesession.org/tunes/1'
@@ -141,7 +153,8 @@ test('promotes a suggested set into a Set with its tunes', async ({ page }, info
 		.getByRole('link', { name: 'The Kesh' })
 		.click();
 	await expect(page.getByRole('heading', { level: 1, name: 'The Kesh' })).toBeVisible();
-	await expect(detail.getByText('G maj')).toBeVisible();
+	// The set's key is on the new tune's thesession recording, and the tune shows it from there.
+	await expect(detail.getByTestId('key')).toHaveText(/G maj\s+from thesession\.org/);
 	await expect(detail.getByRole('list', { name: 'Part of' }).getByRole('link')).toHaveText([
 		"Drowsy Maggie / The Kesh / Cooley's"
 	]);

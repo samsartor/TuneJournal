@@ -12,6 +12,7 @@
 	import SkillSlider from './SkillSlider.svelte';
 	import TagInput from './TagInput.svelte';
 	import TheSessionSearch from './TheSessionSearch.svelte';
+	import { originName } from './origin.ts';
 	import { ui } from './state.svelte.ts';
 
 	const TEXT_DELAY = 400;
@@ -192,18 +193,22 @@
 				</label>
 
 				{#if hasKey(piece)}
+					{@const key = index.inheritedKey(piece)}
+					{@const notes = index.inheritedFirstNotes(piece)}
 					<div class="field">
 						<KeyInput id="edit-key" value={piece.key} onchange={(key) => save({ key })} />
-						{#if tune?.key && piece.key === undefined}
-							<p class="muted inherit-note">
-								Uses {formatKey(tune.key)} from {tuneName} until you set one.
+						{#if key && piece.key === undefined}
+							<p class="muted inherit-note" data-testid="key-inherited">
+								Uses {formatKey(key.value)} from {originName(key.origin)} until you set one.
 							</p>
-						{:else if tune && piece.key !== undefined}
+						{:else if piece.key !== undefined && (key || tune)}
 							<button
 								type="button"
 								class="btn-quiet inherit-btn"
 								onclick={() => save({ key: null })}
-								>Use {tuneName}’s key{tune.key ? ` (${formatKey(tune.key)})` : ''}</button
+								>Use {originName(key?.origin) ?? tuneName}’s key{key
+									? ` (${formatKey(key.value)})`
+									: ''}</button
 							>
 						{/if}
 					</div>
@@ -217,10 +222,25 @@
 							autocomplete="off"
 							autocapitalize="off"
 							spellcheck="false"
-							placeholder="e.g. A2 FA dAFA"
+							placeholder={notes?.value ?? 'e.g. A2 FA dAFA'}
 							bind:value={firstNotes}
 							oninput={() => queue({ firstNotes })}
 						/>
+						{#if notes && !firstNotes}
+							<p class="muted inherit-note" data-testid="first-notes-inherited">
+								Uses the first notes from {originName(notes.origin)} until you set some.
+							</p>
+						{:else if notes && piece.firstNotes !== undefined}
+							<button
+								type="button"
+								class="btn-quiet inherit-btn"
+								onclick={() => {
+									firstNotes = '';
+									pending.firstNotes = null;
+									flush();
+								}}>Use {originName(notes.origin)}’s first notes</button
+							>
+						{/if}
 					</div>
 				{/if}
 

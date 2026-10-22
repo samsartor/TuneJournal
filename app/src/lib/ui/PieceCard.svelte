@@ -12,6 +12,7 @@
 	import Menu from './Menu.svelte';
 	import ProviderIcon from './ProviderIcon.svelte';
 	import SkillDots from './SkillDots.svelte';
+	import { originName } from './origin.ts';
 	import { ui } from './state.svelte.ts';
 
 	let {
@@ -23,12 +24,14 @@
 
 	const name = $derived(piece.title ?? untitled(piece.kind));
 	const stats = $derived(index.stats(piece));
-	const key = $derived(index.effectiveKey(piece));
+	const keyInfo = $derived(index.keyOf(piece));
+	const key = $derived(keyInfo?.value);
+	// A key that isn't the piece's own: a recording's, or a Part's Tune's (§5).
+	const keyFrom = $derived(originName(keyInfo?.origin));
 	const tags = $derived(index.tagsOf(piece));
 	const providers = $derived(index.providersOf(piece));
 	const childCount = $derived(index.children(piece).length);
 	const inherited = $derived(index.inheritsFrom(piece));
-	const ownKey = $derived(piece.key !== undefined);
 	const ownSkill = $derived(piece.skill !== undefined);
 	const from = $derived(inherited ? (inherited.title ?? untitled(inherited.kind)) : '');
 
@@ -58,8 +61,9 @@
 
 	<div class="meta">
 		{#if key && hasKey(piece)}
-			<span class="key" class:inherited={!ownKey} title={ownKey ? undefined : `From ${from}`}
-				>{formatKey(key)}{#if !ownKey}<span class="visually-hidden">, from {from}</span>{/if}</span
+			<span class="key" class:inherited={!!keyFrom} title={keyFrom ? `From ${keyFrom}` : undefined}
+				>{formatKey(key)}{#if keyFrom}<span class="visually-hidden">, from {keyFrom}</span
+					>{/if}</span
 			>
 		{/if}
 		<span

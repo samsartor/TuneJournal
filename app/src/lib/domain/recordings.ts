@@ -131,6 +131,34 @@ export function orphanSources(lib: Library): Source[] {
 	return Object.values(lib.sources).filter((s) => !used.has(s.id));
 }
 
+/**
+ * The library's source for `init`, found by provider + external id (or `init.id`), else created.
+ * An existing source only gets the fields it lacks filled in; nothing is overwritten.
+ */
+export function ensureSource(
+	lib: Library,
+	init: NewSource,
+	now: Timestamp = Date.now()
+): { source: Source; created: boolean } {
+	let source = init.externalId ? findSource(lib, init.provider, init.externalId) : undefined;
+	if (!source && init.id) source = lib.sources[init.id];
+	const created = !source;
+	if (!source) {
+		const id = init.id ?? sourceIdFor(init.provider, init.externalId);
+		const fresh: Source = { id, provider: init.provider, url: init.url, addedAt: now };
+		lib.sources[id] = fresh;
+		source = lib.sources[id];
+	}
+	updateSource(lib, source.id, {
+		title: source.title === undefined ? init.title : undefined,
+		durationSec: source.durationSec === undefined ? init.durationSec : undefined,
+		mime: source.mime === undefined ? init.mime : undefined,
+		assetKey: source.assetKey === undefined ? init.assetKey : undefined
+	});
+	if (source.externalId === undefined && init.externalId) source.externalId = init.externalId;
+	return { source, created };
+}
+
 // Clips
 
 export interface ClipFields {
@@ -164,23 +192,7 @@ export function addRecording(
 	now: Timestamp = Date.now()
 ): AddRecordingResult {
 	const piece = getPiece(lib, pieceId);
-	let source = init.externalId ? findSource(lib, init.provider, init.externalId) : undefined;
-	if (!source && init.id) source = lib.sources[init.id];
-	const newSource = !source;
-	if (!source) {
-		const id = init.id ?? sourceIdFor(init.provider, init.externalId);
-		const created: Source = { id, provider: init.provider, url: init.url, addedAt: now };
-		lib.sources[id] = created;
-		source = lib.sources[id];
-	}
-	// Fill in what the existing source lacks; never overwrite.
-	updateSource(lib, source.id, {
-		title: source.title === undefined ? init.title : undefined,
-		durationSec: source.durationSec === undefined ? init.durationSec : undefined,
-		mime: source.mime === undefined ? init.mime : undefined,
-		assetKey: source.assetKey === undefined ? init.assetKey : undefined
-	});
-	if (source.externalId === undefined && init.externalId) source.externalId = init.externalId;
+	const { source, created: newSource } = ensureSource(lib, init, now);
 
 	const bounds = checkBounds(fields.start, fields.end);
 	const existing = Object.values(piece.clips).find(
@@ -364,4 +376,41 @@ export function moveClipBy(
 	const from = sorted.findIndex((c) => c.id === clipId);
 	if (from < 0) throw new ClipNotFoundError(clipId);
 	return moveClip(lib, pieceId, clipId, from + delta, now);
+}
+
+export interface RelinkOptions {
+	/** A start time carried in the new link (a YouTube `t=`): becomes the clip's start. */
+	start?: number;
+	now?: Timestamp;
+}
+
+/**
+ * Points a clip at another recording, e.g. after its link was corrected: finds or creates the
+ * Source for `init` (as addRecording does) and moves the clip onto it. The old Source stays (other
+ * clips may use it). The clip keeps its title, key, first notes and note. Its trim is kept unless
+ * the new link carries a start time, which replaces the start (and drops an end before it).
+ * Returns whether the clip changed.
+ */
+export function relinkClip(
+	lib: Library,
+	pieceId: PieceId,
+	clipId: ClipId,
+	init: NewSource,
+	{ start, now = Date.now() }: RelinkOptions = {}
+): boolean {
+	const piece = getPiece(lib, pieceId);
+	const clip = getClip(lib, pieceId, clipId);
+	const { source } = ensureSource(lib, init, now);
+	let changed = false;
+	if (clip.sourceId !== source.id) {
+		clip.sourceId = source.id;
+		changed = true;
+	}
+	if (start !== undefined && start > 0 && clip.start !== roundTime(start)) {
+		const end = clip.end !== undefined && clip.end > start ? clip.end : null;
+		updateClip(lib, pieceId, clipId, { start, end }, now);
+		changed = true;
+	}
+	if (changed) piece.modifiedAt = now;
+	return changed;
 }

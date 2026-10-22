@@ -13,6 +13,7 @@
 	import Related from './Related.svelte';
 	import SkillSlider from './SkillSlider.svelte';
 	import TheSessionInfo from './TheSessionInfo.svelte';
+	import { originName } from './origin.ts';
 	import { ui } from './state.svelte.ts';
 
 	let { id }: { id: PieceId } = $props();
@@ -22,13 +23,14 @@
 	const name = $derived(piece ? (piece.title ?? untitled(piece.kind)) : '');
 	const history = $derived(piece && index ? index.effectivePractice(piece) : []);
 	const stats = $derived(piece && index ? index.stats(piece) : undefined);
-	const key = $derived(piece && index ? index.effectiveKey(piece) : undefined);
+	// Key and first notes: the piece's own, else a recording's, else (key only) a Part's Tune's (§5).
+	const keyInfo = $derived(piece && index ? index.keyOf(piece) : undefined);
+	const notesInfo = $derived(piece && index ? index.firstNotesOf(piece) : undefined);
 	const tags = $derived(piece && index ? index.tagsOf(piece) : []);
 	const tuneId = $derived(piece?.external?.thesession?.tuneId);
 	// A Part with no skill or key of its own uses its Tune's (§5).
 	const tune = $derived(piece && index ? index.inheritsFrom(piece) : undefined);
 	const tuneName = $derived(tune ? (tune.title ?? untitled(tune.kind)) : '');
-	const keyInherited = $derived(!!piece && piece.key === undefined && key !== undefined);
 	// A piece merged into another redirects there (§6.4), following chains of merges.
 	$effect(() => {
 		if (!piece?.mergedInto || !index) return;
@@ -120,18 +122,31 @@
 			<dl class="facts">
 				<div>
 					<dt>Key</dt>
-					<dd class:inherited={keyInherited} data-testid="key">
-						{key ? formatKey(key) : '—'}
-						{#if keyInherited && tune}
+					<dd class:inherited={keyInfo && keyInfo.origin.from !== 'own'} data-testid="key">
+						{keyInfo ? formatKey(keyInfo.value) : '—'}
+						{#if keyInfo?.origin.from === 'tune'}
 							<span class="from"
-								>from <a href={resolve('/(main)/piece/[id]', { id: tune.id })}>{tuneName}</a></span
+								>from <a href={resolve('/(main)/piece/[id]', { id: keyInfo.origin.tune.id })}
+									>{originName(keyInfo.origin)}</a
+								></span
 							>
+						{:else if keyInfo?.origin.from === 'clip'}
+							<span class="from">from {originName(keyInfo.origin)}</span>
 						{/if}
 					</dd>
 				</div>
 				<div>
 					<dt>First notes</dt>
-					<dd class="abc">{piece.firstNotes ?? '—'}</dd>
+					<dd
+						class="abc"
+						class:inherited={notesInfo && notesInfo.origin.from !== 'own'}
+						data-testid="first-notes"
+					>
+						{notesInfo?.value ?? '—'}
+						{#if notesInfo && notesInfo.origin.from !== 'own'}
+							<span class="from">from {originName(notesInfo.origin)}</span>
+						{/if}
+					</dd>
 				</div>
 			</dl>
 		{/if}
@@ -349,6 +364,7 @@
 	}
 
 	.from {
+		font-family: var(--font-sans);
 		font-size: 0.875rem;
 		font-style: italic;
 	}

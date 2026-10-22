@@ -1,7 +1,7 @@
 <!--
 	The detail view's recordings section (PLAN.md §6.2, §6.7): clips in order, each with its
 	provider decoration, play (or ↗ for links that open elsewhere), drag or menu to reorder, remove
-	with undo, details, trim and "Keep offline". The import panel is prominent until something
+	with undo, edit, trim, open the link (or save a local-only file) and "Keep offline". The import panel is prominent until something
 	playable is attached, then folds into "+ Add recording".
 -->
 <script lang="ts">
@@ -10,6 +10,7 @@
 	import { formatKey } from '#lib/domain/key.ts';
 	import {
 		PROVIDERS,
+		openLinkOf,
 		isCacheable,
 		isLocalOnly,
 		isPlayable,
@@ -26,7 +27,7 @@
 	import Menu from './Menu.svelte';
 	import ProviderIcon from './ProviderIcon.svelte';
 	import TrimDialog from './TrimDialog.svelte';
-	import { backUp, removeRecording } from './recordings.ts';
+	import { backUp, downloadRecording, removeRecording } from './recordings.ts';
 	import { ui } from './state.svelte.ts';
 
 	let { piece }: { piece: Piece } = $props();
@@ -192,7 +193,12 @@
 					<Menu
 						label="Actions for {title}"
 						items={[
-							{ label: 'Details…', run: () => (editing = c.clip.id) },
+							{ label: 'Edit…', run: () => (editing = c.clip.id) },
+							...(openLinkOf(c.source)
+								? [{ label: 'Open link ↗', href: openLinkOf(c.source) }]
+								: localOnly && cached
+									? [{ label: 'Download file', run: () => void downloadRecording(c.source, title) }]
+									: []),
 							...(playable ? [{ label: 'Trim…', run: () => (trimming = c.clip.id) }] : []),
 							...(i > 0
 								? [
@@ -237,12 +243,11 @@
 </section>
 
 {#if editing}
-	{@const c = clips.find((x) => x.clip.id === editing)}
 	<ClipDialog
 		pieceId={piece.id}
 		clipId={editing}
-		lookedUpTitle={c ? oembed.lookup(c.source)?.title : undefined}
 		onclose={() => (editing = undefined)}
+		ontrim={(id) => (trimming = id)}
 	/>
 {/if}
 {#if trimming}

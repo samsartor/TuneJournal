@@ -7,8 +7,8 @@
 	import { theSession } from '#lib/store/thesession.svelte.ts';
 	import { isLocalOnly } from '#lib/domain/providers.ts';
 	import { audioFiles } from '#lib/store/audio.svelte.ts';
-	import { gdrive } from '#lib/store/gdrive.svelte.ts';
 	import { oembed } from '#lib/store/oembed.svelte.ts';
+	import DriveSettings from '#lib/ui/DriveSettings.svelte';
 	import SyncIndicator from '#lib/ui/SyncIndicator.svelte';
 	import { ui } from '#lib/ui/state.svelte.ts';
 
@@ -71,14 +71,6 @@
 			clearingAudio = false;
 		}
 		await refreshStorage();
-	}
-
-	async function connectDrive() {
-		try {
-			await gdrive.connect();
-		} catch (e) {
-			ui.showToast(`Google Drive: ${e instanceof Error ? e.message : e}`);
-		}
 	}
 
 	onMount(() => {
@@ -239,23 +231,7 @@
 		{/if}
 	</section>
 
-	{#if gdrive.configured}
-		<section>
-			<h2>Google Drive</h2>
-			<p class="muted small">
-				Uploads are backed up to a <code>TuneJournal</code> folder in your Drive, so your other devices
-				can play them. TuneJournal only sees files you pick or it created.
-			</p>
-			{#if gdrive.connected}
-				<p>Connected on this device.</p>
-				<button type="button" class="btn-quiet" onclick={() => gdrive.disconnect()}
-					>Disconnect</button
-				>
-			{:else}
-				<button type="button" onclick={connectDrive}>Connect Google Drive</button>
-			{/if}
-		</section>
-	{/if}
+	<DriveSettings />
 
 	<section>
 		<h2>Cached data</h2>

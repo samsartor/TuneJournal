@@ -8,6 +8,7 @@ import {
 	isLocalOnly,
 	isAudioUrl,
 	isPlayable,
+	openLinkOf,
 	playbackOf,
 	recordingTitle,
 	DRIVE_ASSET
@@ -20,6 +21,7 @@ import {
 	moveClip,
 	moveClipBy,
 	orphanSources,
+	relinkClip,
 	removeClip,
 	restoreClip,
 	sortedClips,
@@ -339,6 +341,49 @@ describe.each([
 		});
 	});
 
+	describe('relinkClip', () => {
+		it('points a clip at another link, keeping its own fields and trim', () => {
+			const { h, id, piece } = setup();
+			const { clipId, sourceId: old } = h.change((l) =>
+				addRecording(l, id, YT, { start: 5, end: 40, title: 'Live', key: 'Edor' }, 2000)
+			);
+			const next = {
+				provider: 'youtube' as const,
+				url: 'https://www.youtube.com/watch?v=zyxwvutsrqp',
+				externalId: 'zyxwvutsrqp'
+			};
+			expect(h.change((l) => relinkClip(l, id, clipId, next, { now: 3000 }))).toBe(true);
+			const clip = piece().clips[clipId];
+			expect(clip).toMatchObject({
+				sourceId: 'youtube:zyxwvutsrqp',
+				start: 5,
+				end: 40,
+				title: 'Live',
+				key: 'E dorian'
+			});
+			expect(h.lib.sources['youtube:zyxwvutsrqp' as SourceId]).toMatchObject({ url: next.url });
+			// The old source stays: other clips (or an undo) may use it.
+			expect(h.lib.sources[old]).toBeDefined();
+			expect(piece().modifiedAt).toBe(3000);
+			// The same link again changes nothing.
+			expect(h.change((l) => relinkClip(l, id, clipId, next))).toBe(false);
+
+			// A start in the new link replaces the start, and drops an end before it.
+			const spotify = {
+				provider: 'url' as const,
+				url: 'https://x.org/a',
+				externalId: 'https://x.org/a'
+			};
+			h.change((l) => relinkClip(l, id, clipId, spotify, { start: 50 }));
+			expect(piece().clips[clipId]).toMatchObject({ sourceId: 'url:https://x.org/a', start: 50 });
+			expect('end' in piece().clips[clipId]).toBe(false);
+			// Reuses an existing source for the same link.
+			const again = h.change((l) => addRecording(l, id, next));
+			expect(again).toMatchObject({ sourceId: 'youtube:zyxwvutsrqp', newSource: false });
+			expect(hasUndefined(h.lib)).toBe(false);
+		});
+	});
+
 	it('updateSource sets and clears metadata', () => {
 		const { h, id } = setup();
 		const { sourceId } = h.change((l) => addRecording(l, id, { provider: 'upload', url: '' }));
@@ -491,5 +536,26 @@ describe('providers', () => {
 		expect(isLocalOnly({ provider: 'upload' })).toBe(true);
 		expect(isLocalOnly({ provider: 'upload', assetKey: 'gdrive:F2' })).toBe(false);
 		expect(isLocalOnly({ provider: 'youtube', externalId: 'x' })).toBe(false);
+	});
+
+	it('“Open link” targets', () => {
+		const drive = 'https://drive.google.com/file/d/F2/view';
+		// A backed-up upload opens its Drive copy; a picked Drive file opens itself.
+		expect(openLinkOf({ provider: 'upload', url: drive, assetKey: 'gdrive:F2' })).toBe(drive);
+		expect(openLinkOf({ provider: 'gdrive', url: '', externalId: 'F2' })).toBe(drive);
+		expect(openLinkOf({ provider: 'youtube', url: 'https://www.youtube.com/watch?v=x' })).toBe(
+			'https://www.youtube.com/watch?v=x'
+		);
+		expect(openLinkOf({ provider: 'spotify', url: 'https://open.spotify.com/track/1' })).toBe(
+			'https://open.spotify.com/track/1'
+		);
+		expect(openLinkOf({ provider: 'thesession', url: 'https://thesession.org/tunes/1' })).toBe(
+			'https://thesession.org/tunes/1'
+		);
+		expect(openLinkOf({ provider: 'url', url: 'http://example.org/a.mp3' })).toBe(
+			'http://example.org/a.mp3'
+		);
+		// A local-only upload has nothing to open.
+		expect(openLinkOf({ provider: 'upload', url: '' })).toBeUndefined();
 	});
 });

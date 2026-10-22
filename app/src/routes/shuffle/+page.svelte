@@ -120,7 +120,9 @@
 	onDestroy(() => player.close());
 
 	const name = $derived(piece ? (piece.title ?? untitled(piece.kind)) : '');
+	// Effective values (§5): a recording's, or a Part's Tune's key, when the piece has none.
 	const key = $derived(piece && index ? index.effectiveKey(piece) : undefined);
+	const firstNotes = $derived(piece && index ? index.effectiveFirstNotes(piece) : undefined);
 	const tags = $derived(piece && index ? index.tagsOf(piece) : []);
 	const stats = $derived(piece && index ? index.stats(piece) : undefined);
 	const tune = $derived(piece && index ? index.inheritsFrom(piece) : undefined);
@@ -159,12 +161,10 @@
 						{#if piece.favorite}<span class="star" aria-label="Favorite" role="img">★</span>{/if}
 					</div>
 					<h2 id="shuffle-title" class:muted={!piece.title}>{name}</h2>
-					{#if hasKey(piece) && (key || piece.firstNotes)}
+					{#if hasKey(piece) && (key || firstNotes)}
 						<p class="facts">
 							{#if key}<span class="key" data-testid="shuffle-key">{formatKey(key)}</span>{/if}
-							{#if piece.firstNotes}<span class="abc" aria-label="First notes"
-									>{piece.firstNotes}</span
-								>{/if}
+							{#if firstNotes}<span class="abc" aria-label="First notes">{firstNotes}</span>{/if}
 						</p>
 					{/if}
 					{#if tags.length > 0}

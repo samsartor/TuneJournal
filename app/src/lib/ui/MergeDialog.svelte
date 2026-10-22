@@ -22,7 +22,7 @@
 	const dateFormat = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' });
 
 	const pieces = $derived(
-		(ui.merging ?? [])
+		[...new Set(ui.merging ?? [])]
 			.map((id) => library.doc?.pieces[id])
 			.filter((p): p is Piece => !!p && p.deletedAt === undefined && p.mergedInto === undefined)
 	);

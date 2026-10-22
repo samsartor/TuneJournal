@@ -1,7 +1,9 @@
 <script lang="ts">
 	// The 🔍 panel under the title in the edit modal (PLAN.md §6.3): search thesession.org, pick a
-	// tune to fill title, type tag, tune id and link, then pick a setting for key and first notes.
-	// If the tune is already in the library, offer to open or merge into it instead.
+	// tune to fill title, type tag, tune id and link, then pick a setting, whose key and first notes
+	// go on the thesession recording (§5). If the tune is already in the library, offer to open or
+	// merge into it instead. The recording's Edit dialog reuses it to change the linked tune, or
+	// (with `settingsOf`) just the setting.
 
 	import { onDestroy, onMount } from 'svelte';
 	import { foldText } from '#lib/domain/derived.ts';
@@ -12,6 +14,7 @@
 		applyTheSessionSetting,
 		linkTheSessionTune,
 		piecesWithTune,
+		tuneUrl,
 		typeTag
 	} from '#lib/domain/thesession.ts';
 	import type { Piece, PieceId } from '#lib/domain/types.ts';
@@ -32,11 +35,14 @@
 		beforeApply,
 		onapplied,
 		onclose,
-		onleave
+		onleave,
+		settingsOf
 	}: {
 		pieceId: PieceId;
 		initialQuery: string;
 		isNew: boolean;
+		/** Skip the search: pick another setting of this (already linked) tune. */
+		settingsOf?: { tuneId: number; name: string };
 		/** Saves pending text edits before the panel writes. */
 		beforeApply: () => void;
 		/** After a write, so the modal can refresh its local copies of text fields. */
@@ -71,9 +77,17 @@
 	onDestroy(() => clearTimeout(timer));
 
 	onMount(() => {
+		if (settingsOf) {
+			const { tuneId, name } = settingsOf;
+			const hit: SearchHit = { id: tuneId, name, url: tuneUrl(tuneId), type: '', date: '' };
+			void chooseSetting(hit, theSession.fetchTune(tuneId), true);
+			return;
+		}
 		input?.focus();
 		if (query) void search();
 	});
+
+	const currentSetting = $derived(piece?.external?.thesession?.settingId);
 
 	async function search() {
 		clearTimeout(timer);
@@ -153,7 +167,12 @@
 		else void chooseSetting(hit, tune);
 	}
 
-	async function chooseSetting(hit: SearchHit, pending = theSession.fetchTune(hit.id)) {
+	async function chooseSetting(
+		hit: SearchHit,
+		pending = theSession.fetchTune(hit.id),
+		/** Always show the list, even with one setting (changing the setting on purpose). */
+		always = false
+	) {
 		step = { kind: 'settings', hit };
 		let tune: Tune;
 		try {
@@ -164,7 +183,7 @@
 		}
 		if (step.kind !== 'settings' || step.hit !== hit) return;
 		if (tune.settings.length === 0) return onclose();
-		if (tune.settings.length === 1) {
+		if (tune.settings.length === 1 && !always) {
 			// Nothing to choose: fill whatever is still blank.
 			useSetting(tune.settings[0], false);
 			return;
@@ -206,7 +225,7 @@
 
 <div class="panel" role="group" aria-labelledby="ts-heading">
 	<div class="panel-head">
-		<h3 id="ts-heading">Search thesession.org</h3>
+		<h3 id="ts-heading">{settingsOf ? 'Pick a setting' : 'Search thesession.org'}</h3>
 		<button
 			type="button"
 			class="icon-btn"
@@ -291,7 +310,9 @@
 			<p class="muted" aria-live="polite">Loading settings…</p>
 		{:else}
 			<p id="ts-settings-label">
-				“{step.tune.name}” has {step.tune.settings.length} settings. Pick one for the key and first notes.
+				“{step.tune.name}” has {step.tune.settings.length}
+				{step.tune.settings.length === 1 ? 'setting' : 'settings'}. Pick one for the key and first
+				notes.
 			</p>
 			<ul class="results settings" aria-labelledby="ts-settings-label">
 				{#each step.tune.settings as setting, i (setting.id)}
@@ -300,9 +321,11 @@
 							type="button"
 							class="result"
 							aria-label="Setting {i + 1}, {settingKey(setting)}: {firstBars(setting.abc, 2)}"
+							aria-current={setting.id === currentSetting ? 'true' : undefined}
 							onclick={() => useSetting(setting)}
 						>
 							<span class="name">Setting {i + 1}</span>
+							{#if setting.id === currentSetting}<span class="chip">Current</span>{/if}
 							<span class="type">{settingKey(setting)}</span>
 							<span class="abc">{firstBars(setting.abc, 2)}</span>
 						</button>
@@ -310,7 +333,9 @@
 				{/each}
 			</ul>
 			<div class="buttons">
-				<button type="button" class="btn-quiet" onclick={onclose}>Skip</button>
+				<button type="button" class="btn-quiet" onclick={onclose}
+					>{settingsOf ? 'Cancel' : 'Skip'}</button
+				>
 			</div>
 		{/if}
 	{/if}
@@ -378,6 +403,10 @@
 		.result:hover {
 			border-color: var(--color-accent);
 		}
+	}
+
+	.result[aria-current='true'] {
+		border-color: var(--color-accent);
 	}
 
 	.name {

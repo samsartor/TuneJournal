@@ -213,8 +213,8 @@ test('pastes YouTube and Spotify links, plays YouTube in the stub player', async
 	).toHaveAttribute('href', SPOTIFY_URL);
 
 	// Per-clip key override.
-	await clipMenu(page, 'Kesh Jig (album version)', 'Details…');
-	const details = page.getByRole('dialog', { name: 'Recording details' });
+	await clipMenu(page, 'Kesh Jig (album version)', 'Edit…');
+	const details = page.getByRole('dialog', { name: 'Edit recording' });
 	await details.getByLabel('Key as text').fill('Ddor');
 	await details.getByLabel('First notes (ABC)').fill('DEFG');
 	await details.getByRole('button', { name: 'Done' }).click();
@@ -238,15 +238,15 @@ test('pastes YouTube and Spotify links, plays YouTube in the stub player', async
 		.toBe(0.65);
 	expect(await page.evaluate(() => (window as unknown as YtStub).__yt.loaded)).toContain(YT_ID);
 
-	// The YouTube trim editor is a slider with "set here" buttons.
+	// The YouTube trim editor is a timeline with flags and "set at playhead" buttons.
 	await clipMenu(page, 'The Kesh — live session', 'Trim…');
 	const dialog = page.getByRole('dialog', { name: /Trim/ });
-	await expect(dialog.getByRole('slider', { name: 'End' })).toBeVisible();
-	await dialog.getByRole('slider', { name: 'End' }).fill('45');
+	await expect(dialog.getByRole('slider', { name: 'End flag' })).toBeVisible();
+	await dialog.getByRole('slider', { name: 'End flag' }).fill('45');
 	await dialog.getByRole('button', { name: 'Preview (loop)' }).click();
 	await expect(bar).toHaveAttribute('data-end', '45.00');
-	await dialog.getByRole('button', { name: /^Set start here/ }).click();
-	const startValue = Number(await dialog.getByRole('slider', { name: 'Start' }).inputValue());
+	await dialog.getByRole('button', { name: 'Set start at playhead' }).click();
+	const startValue = Number(await dialog.getByRole('slider', { name: 'Start flag' }).inputValue());
 	expect(startValue).toBeGreaterThan(29);
 	await dialog.getByRole('button', { name: 'Save trim' }).click();
 	await expect(dialog).toBeHidden();

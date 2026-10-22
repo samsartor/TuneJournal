@@ -74,6 +74,24 @@ export function driveFileId(source: Pick<Source, 'provider' | 'externalId' | 'as
 	return undefined;
 }
 
+/** The Drive file's own page (Drive's web view). */
+export function driveFileUrl(fileId: string): string {
+	return `https://drive.google.com/file/d/${encodeURIComponent(fileId)}/view`;
+}
+
+/**
+ * Where "Open link ↗" goes for a recording: the Drive file's page for anything kept in Drive (a
+ * picked Drive file, or a backed-up upload), else its own web link (YouTube, Spotify,
+ * thesession.org, any other URL). Undefined for an upload that exists only on one device.
+ */
+export function openLinkOf(
+	source: Pick<Source, 'provider' | 'url' | 'externalId' | 'assetKey'>
+): string | undefined {
+	const drive = driveFileId(source);
+	if (drive) return driveFileUrl(drive);
+	return /^https?:\/\//i.test(source.url) ? source.url : undefined;
+}
+
 /**
  * Uploaded audio that exists only on the device it was added from: nothing to fetch it from
  * elsewhere until it's backed up.

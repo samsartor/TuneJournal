@@ -203,14 +203,33 @@ class PlayerStore {
 		this.#adapter?.setBounds(clip.start, clip.end);
 	}
 
-	/** Plays the current clip between other bounds, looped: the trim editor's preview. */
-	async preview(start: number | undefined, end: number | undefined) {
+	/**
+	 * The trim editor's transport: the clip loaded in the player plays its whole media, not looped,
+	 * so the playhead can go anywhere while the region is chosen. `endPreview` goes back to the
+	 * clip's own bounds and loop setting.
+	 */
+	editTrim() {
+		this.previewing = true;
+		this.trim = {};
+		this.#adapter?.setBounds(undefined, undefined);
+		this.#adapter?.setLoop(false);
+	}
+
+	/**
+	 * Plays the current clip between other bounds, looped: the trim editor's region preview. With
+	 * `restart` false (moving a flag while it plays) it carries on unless the playhead fell outside.
+	 */
+	async preview(start: number | undefined, end: number | undefined, { restart = true } = {}) {
 		this.previewing = true;
 		this.trim = { start, end };
 		this.#adapter?.setBounds(start, end);
 		this.#adapter?.setLoop(true);
-		this.#adapter?.seek(start ?? 0);
-		await this.play();
+		const b = clipBounds(this.trim, this.duration);
+		if (restart || this.time < b.start || this.time > b.end) {
+			this.#adapter?.seek(b.start);
+			this.time = b.start;
+		}
+		if (restart) await this.play();
 	}
 
 	/** Back to the clip's own bounds and loop setting. */

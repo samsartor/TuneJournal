@@ -6,6 +6,7 @@ import recordings from './fixtures/tune-1-recordings.json';
 import {
 	TheSessionClient,
 	TheSessionError,
+	dedupeSets,
 	firstBars,
 	parseKey,
 	parseRecordings,
@@ -15,6 +16,29 @@ import {
 } from './thesession';
 
 describe('parsers', () => {
+	it('drops repeated sets, tunes, settings and recordings (thesession lists some twice)', () => {
+		// /tunes/4428/sets really does list set 150333 twice; the UI keys lists by id.
+		const doubled = { ...sets, sets: [sets.sets[0], ...sets.sets, sets.sets[1]] };
+		const s = parseSets(doubled);
+		expect(s.sets.map((x) => x.id)).toEqual(sets.sets.map((x) => x.id));
+		expect(
+			parseSearch({ ...search, tunes: [...search.tunes, search.tunes[0]] }).tunes
+		).toHaveLength(search.tunes.length);
+		expect(
+			parseTune({ ...tune, settings: [...tune.settings, tune.settings[0]] }).settings
+		).toHaveLength(tune.settings.length);
+		expect(
+			parseRecordings({
+				...recordings,
+				recordings: [...recordings.recordings, recordings.recordings[0]]
+			}).recordings
+		).toHaveLength(recordings.recordings.length);
+		// Data cached before the fix is cleaned on the way out too.
+		const cached = { ...s, sets: [...s.sets, s.sets[0]] };
+		expect(dedupeSets(cached).sets).toHaveLength(s.sets.length);
+		expect(dedupeSets(s)).toBe(s);
+	});
+
 	it('parses search results', () => {
 		const r = parseSearch(search);
 		expect(r.total).toBe(10);
