@@ -9,10 +9,33 @@ const CACHE = `tunejournal-${typeof __BUILD_ID__ === 'string' ? __BUILD_ID__ : '
 
 const scoped = (path: string) => new URL(path, self.registration.scope).href;
 
+// The synth's instrument samples (static/soundfont/, a few MB in all) aren't precached: each
+// note is cached the first time a rendering asks for it, in a cache that outlives app updates
+// (the files never change; bump the version if they do). Renderings then work offline for every
+// instrument and pitch already heard (PLAN.md §14 "Synthesized playback").
+const SOUNDFONT_CACHE = 'tunejournal-soundfont-v1';
+const SOUNDFONT = scoped('soundfont/');
+
 // The SPA fallback page isn't listed in the manifest, so cache the app root explicitly.
 const SHELL = scoped('./');
-const PRECACHE = [SHELL, ...[...immutable, ...assets].map(({ path }) => scoped(path))];
+const PRECACHE = [
+	SHELL,
+	...[...immutable, ...assets]
+		.map(({ path }) => scoped(path))
+		.filter((url) => !url.startsWith(SOUNDFONT))
+];
 const PRECACHED = new Set(PRECACHE);
+
+async function soundfont(request: Request): Promise<Response> {
+	const cache = await caches.open(SOUNDFONT_CACHE);
+	const cached = await cache.match(request, { ignoreSearch: true });
+	if (cached) return cached;
+	const response = await fetch(request);
+	// The host answers unknown paths with the app page (SPA fallback); never keep that as a sample.
+	const html = response.headers.get('content-type')?.includes('text/html');
+	if (response.ok && !html) await cache.put(request, response.clone());
+	return response;
+}
 
 self.addEventListener('install', (event) => {
 	// No skipWaiting() here: the page prompts the user and posts SKIP_WAITING when they accept.
@@ -23,7 +46,7 @@ self.addEventListener('activate', (event) => {
 	event.waitUntil(
 		(async () => {
 			for (const key of await caches.keys()) {
-				if (key !== CACHE) await caches.delete(key);
+				if (key !== CACHE && key !== SOUNDFONT_CACHE) await caches.delete(key);
 			}
 			await self.clients.claim();
 		})()
@@ -51,6 +74,10 @@ self.addEventListener('fetch', (event) => {
 	}
 
 	url.search = '';
+	if (url.href.startsWith(SOUNDFONT)) {
+		event.respondWith(soundfont(request));
+		return;
+	}
 	if (PRECACHED.has(url.href)) {
 		event.respondWith(caches.match(url.href).then((cached) => cached ?? fetch(request)));
 	}

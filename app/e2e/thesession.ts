@@ -10,11 +10,11 @@ const EMPTY_SEARCH = JSON.stringify({ format: 'json', page: 1, pages: 0, total: 
 /**
  * Serves thesession.org from the recorded fixtures, so tests never reach the real site. Anything
  * without a fixture gets a 404. `overrides` replaces the body for a path. Returns the list of
- * requested paths.
+ * requested paths. On the context, so it holds for every page and survives reloads.
  */
 export async function mockTheSession(page: Page, overrides: Record<string, string> = {}) {
 	const requests: string[] = [];
-	await page.route('https://thesession.org/**', async (route) => {
+	await page.context().route('https://thesession.org/**', async (route) => {
 		const url = new URL(route.request().url());
 		requests.push(url.pathname + url.search);
 		let body: string | undefined;

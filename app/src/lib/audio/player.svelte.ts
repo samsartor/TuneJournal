@@ -2,14 +2,17 @@
 // through whichever PlayerAdapter fits the clip's source. Speed is remembered per device as the
 // default for the next session; loop stays on until turned off.
 
-import { playbackOf, type Playback } from '#lib/domain/providers.ts';
-import type { Clip, ClipId, PieceId, Source } from '#lib/domain/types.ts';
+import type { Playback } from '#lib/domain/providers.ts';
+import { synthTarget } from '#lib/domain/synth.ts';
+import type { Clip, ClipId, Piece, PieceId, Source } from '#lib/domain/types.ts';
 import { audioFiles } from '#lib/store/audio.svelte.ts';
 import { library } from '#lib/store/library.svelte.ts';
+import { synth } from '#lib/store/synth.svelte.ts';
 import type { PlayableClip, PlayerAdapter } from './adapter.ts';
 import { clampRate, clipBounds, type Trim } from './bounds.ts';
 import { HtmlAudioAdapter } from './html-audio.ts';
 import { LinkOutAdapter } from './link-out.ts';
+import { SynthAdapter } from './synth-adapter.ts';
 import { YouTubeAdapter } from './youtube.ts';
 
 const RATE_KEY = 'tunejournal.player.rate';
@@ -44,6 +47,8 @@ class PlayerStore {
 	time = $state(0);
 	duration = $state<number>();
 	rate = $state(readRate());
+	/** A synthesized tune: the tempo it's rendered at (it plays stretched until this is `rate`). */
+	renderedTempo = $state<number>();
 	loop = $state(false);
 	/** The trim in effect: the clip's, or a preview from the trim editor. */
 	trim = $state<Trim>({});
@@ -56,6 +61,15 @@ class PlayerStore {
 	#videoHost?: HTMLElement;
 	#loadToken = 0;
 	#link = new LinkOutAdapter();
+	/** The setting a loaded synth clip was last rendered from. */
+	#synthSetting?: number;
+
+	constructor() {
+		// New synth options (instrument, times through, chords) re-render what's loaded, in place.
+		synth.onOptionsChange(() => {
+			if (this.#adapter instanceof SynthAdapter) this.#adapter.rerender({ force: true });
+		});
+	}
 
 	/** The bar's element for the YouTube iframe. */
 	setVideoHost(el: HTMLElement | undefined) {
@@ -66,10 +80,14 @@ class PlayerStore {
 		return this.current?.pieceId === pieceId && this.current.clipId === clipId;
 	}
 
-	#lookup(pieceId: PieceId, clipId: ClipId): { clip: Clip; source: Source } | undefined {
-		const clip = library.doc?.pieces[pieceId]?.clips[clipId];
+	#lookup(
+		pieceId: PieceId,
+		clipId: ClipId
+	): { piece: Piece; clip: Clip; source: Source } | undefined {
+		const piece = library.doc?.pieces[pieceId];
+		const clip = piece?.clips[clipId];
 		const source = clip && library.doc?.sources[clip.sourceId];
-		return clip && source ? { clip, source } : undefined;
+		return piece && clip && source ? { piece, clip, source } : undefined;
 	}
 
 	/**
@@ -79,8 +97,9 @@ class PlayerStore {
 	async open(pieceId: PieceId, clipId: ClipId, { autoplay = true }: OpenOptions = {}) {
 		const found = this.#lookup(pieceId, clipId);
 		if (!found) return;
-		const { clip, source } = found;
-		const kind = playbackOf(source);
+		const { piece, clip, source } = found;
+		// A thesession link plays its chosen setting, synthesized, when its ABC is at hand.
+		const kind = synth.playback(piece, source);
 		if (kind === 'link') {
 			await this.#link.load({ kind, url: source.url });
 			if (autoplay) await this.#link.play();
@@ -103,15 +122,17 @@ class PlayerStore {
 		this.trim = { start: clip.start, end: clip.end };
 		this.time = clip.start ?? 0;
 		this.duration = source.durationSec;
+		this.renderedTempo = undefined;
 		try {
 			const playable = await this.#resolve(kind, clip, source);
 			if (token !== this.#loadToken) return;
-			const adapter = this.#adapterFor(kind);
+			const adapter = this.#adapterFor(kind, piece, source);
 			this.#adapter = adapter;
 			this.#off = adapter.onTime((s) => {
 				this.time = s.time;
 				if (s.duration !== undefined) this.duration = s.duration;
 				this.playing = s.playing;
+				this.renderedTempo = s.renderedTempo;
 			});
 			adapter.setRate(this.rate);
 			adapter.setLoop(this.loop);
@@ -130,6 +151,7 @@ class PlayerStore {
 	async #resolve(kind: Playback, clip: Clip, source: Source): Promise<PlayableClip> {
 		const base = { kind, url: source.url, start: clip.start, end: clip.end };
 		if (kind === 'youtube') return { ...base, videoId: source.externalId };
+		if (kind === 'synth') return base;
 		// A remote audio URL we merely link to plays straight from the web unless it's cached.
 		if (source.provider === 'url' && !audioFiles.cached(source.id))
 			return { ...base, src: source.url };
@@ -139,7 +161,20 @@ class PlayerStore {
 		return { ...base, src: this.#objectUrl };
 	}
 
-	#adapterFor(kind: Playback): PlayerAdapter {
+	#adapterFor(kind: Playback, piece: Piece, source: Source): PlayerAdapter {
+		if (kind === 'synth') {
+			const target = synthTarget(piece, source);
+			if (!target) throw new Error('This tune has no setting to play.');
+			this.#synthSetting = target.settingId;
+			// The piece's setting can change while it's loaded (Edit… → Change setting): render
+			// whichever is chosen now.
+			const { pieceId, clipId } = this.current!;
+			return new SynthAdapter((tempo, transpose) => {
+				const now = this.#lookup(pieceId, clipId);
+				const latest = (now && synthTarget(now.piece, now.source)) ?? target;
+				return synth.render(latest, tempo, transpose);
+			});
+		}
 		if (kind === 'youtube') {
 			if (!this.#videoHost) throw new Error('The video player isn’t ready');
 			return new YouTubeAdapter(this.#videoHost);
@@ -196,6 +231,14 @@ class PlayerStore {
 		if (!clip) {
 			this.close();
 			return;
+		}
+		if (this.#adapter instanceof SynthAdapter && this.current) {
+			const now = this.#lookup(this.current.pieceId, this.current.clipId);
+			const target = now && synthTarget(now.piece, now.source);
+			if (target && target.settingId !== this.#synthSetting) {
+				this.#synthSetting = target.settingId;
+				this.#adapter.rerender({ force: true });
+			}
 		}
 		if (this.previewing) return;
 		if (clip.start === this.trim.start && clip.end === this.trim.end) return;
@@ -265,6 +308,7 @@ class PlayerStore {
 		this.previewing = false;
 		this.time = 0;
 		this.duration = undefined;
+		this.renderedTempo = undefined;
 	}
 }
 

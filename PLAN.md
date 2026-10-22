@@ -438,7 +438,22 @@ RNG, so it's unit-testable.
     though `getAvailablePlaybackRates()` only lists `[0.25, 0.5, 0.75, 1, …, 2]`. The same speed
     UI therefore works for both adapters. YouTube's own pitch correction applies, and we can't
     turn it off.
-  - `LinkOutAdapter` (Spotify, thesession, unknown) opens the URL in a new tab.
+  - `SynthAdapter` plays a **synthesized thesession setting** (below) through an inner
+    `HtmlAudioAdapter`, so scrubbing, loop, trim and the waveform work as for a file.
+  - `LinkOutAdapter` (Spotify, thesession without a playable setting, unknown) opens the URL in a
+    new tab.
+- **Synthesized playback (♪ Synth).** A thesession tune link whose piece has a chosen setting
+  plays that setting in the app: abcjs (lazy-loaded) renders its ABC with self-hosted instrument
+  samples to a WAV, which is cached in the audio cache (OPFS) and played like a recording. It's
+  marked "♪ Synth" on the clip row, in the mini-player and in Shuffle, since it isn't a real
+  recording. Speed re-renders at the new tempo rather than time-stretching (the stretched
+  rendering bridges the fraction of a second until then), and the player, trim and playhead all
+  work in *tune time* (seconds at 100%), so a trim means the same bars at every speed. Options,
+  per device: instrument (fiddle, flute, whistle, accordion, piano), times through (1–4, default
+  2, the ABC's own repeats honoured) and chord accompaniment; in Settings and in the recording's
+  Edit dialog, which also has **Show notation** (abcjs sheet music, highlighting the note being
+  played). Without a chosen setting, or offline before the tune was ever loaded, the link opens
+  thesession.org as before. Decisions in §14 "Synthesized playback".
 - The **trim editor** (Trim, and Split's region picker) has its own transport, since the
   mini-player bar sits behind its dialog: play/pause, a playhead you can tap or drag on the
   waveform (a plain timeline for YouTube, where we can't get the audio), two draggable start/end
@@ -458,7 +473,7 @@ Results of the M0 spike (2026-10-22, see §7.1 for evidence) and the planned app
 
 | Source | Client-side? | Approach | Backend needed for |
 |---|---|---|---|
-| **thesession.org** | ✅ **confirmed**. All four endpoints send `ACAO: *` and were fetched from a page in headless Chromium | Client: `src/lib/integrations/thesession.ts` (fixtures + tests). Search `/tunes/search?q=` (honours `perpage`, results carry no aliases or settings). Details `/tunes/{id}` (type, aliases, `recordings` count, settings with `key` such as `Edorian` plus the ABC body). `/tunes/{id}/sets` is paged at a fixed 10 and ignores `perpage`; its entries are *settings*, so the tune id has to be parsed from the URL, and keys there are abbreviated (`Edor`). `/tunes/{id}/recordings` returns everything (197 for Cooley's) plus `recorded_with` counts. Cache in IndexedDB with a TTL, debounce search, throttle. | Nothing |
+| **thesession.org** | ✅ **confirmed**. All four endpoints send `ACAO: *` and were fetched from a page in headless Chromium | Client: `src/lib/integrations/thesession.ts` (fixtures + tests). Search `/tunes/search?q=` (honours `perpage`, results carry no aliases or settings). Details `/tunes/{id}` (type, aliases, `recordings` count, settings with `key` such as `Edorian` plus the ABC body). `/tunes/{id}/sets` is paged at a fixed 10 and ignores `perpage`; its entries are *settings*, so the tune id has to be parsed from the URL, and keys there are abbreviated (`Edor`). `/tunes/{id}/recordings` returns everything (197 for Cooley's) plus `recorded_with` counts. Cache in IndexedDB with a TTL, debounce search, throttle. A chosen setting's ABC also plays synthesized in the app (§6.6), rendered in the browser by abcjs with self-hosted samples. | Nothing |
 | **Google Drive** | ✅ CORS **confirmed** (the preflight for `files/{id}?alt=media` and for multipart upload allows `authorization` and reflects the origin). End-to-end is **pending manual test** (needs credentials) | Google Identity Services token client + Picker API, `drive.file` scope. That scope is non-sensitive, so the app needs no Google verification and sees only files the user picks or the app creates. Download with `files.get?alt=media` + bearer token → blob → OPFS cache. Upload with multipart into an app-created `TuneJournal/` folder. Spike: `/spike/drive`; setup steps in `spikes/README.md`. Config comes from `PUBLIC_GOOGLE_{CLIENT_ID,API_KEY,APP_ID}`. | Nothing. Tokens are short-lived, so a re-auth prompt is acceptable. |
 | **Pixel Recorder** | ❌ API. ✅ the Share Target path works end-to-end in desktop Chromium; the Android share sheet is **pending manual test** | The only API is the unofficial cookie-based web API used by `google-recorder-cli`, which needs headless Chrome to refresh cookies. That's fragile and server-only. **v1 path:** the Recorder app's *Share* button sends the audio file to our PWA through the **Web Share Target API** (Android, installed PWA). Alternatively, the user saves to Drive and picks it there. The manifest `share_target` POSTs multipart to `/share-target` (M0's spike used `/spike/share-target`, which is still accepted). The service worker stores the files in the audio cache (OPFS, falling back to IndexedDB where `createWritable` is missing in the SW) with an inbox entry, and 303-redirects to the "Shared recording" page `/shared`. Text and URL shares are kept too. | Optional later: a proxy using `google-recorder-cli` on the VPS for browsing and bulk import |
 | **YouTube** | ✅ **confirmed** for playback and oEmbed | IFrame player with clip start/end, our own loop (seek back to `start` on `end`), and `setPlaybackRate` with any 0.05 step (measured: 0.85 requested → media clock 0.87×). `youtube.com/oembed?format=json` reflects the request `Origin` in `ACAO`, so it works from the browser. noembed.com (`ACAO: *`) is the fallback. No offline playback. | `yt-dlp` → audio file → asset storage, for offline use and waveform trimming |
@@ -600,11 +615,11 @@ When it arrives, it's a single small service on the VPS, deployed with Docker Co
 │  ├─ src/lib/store/         Automerge repo setup, Svelte bindings, export/import
 │  ├─ src/lib/pwa/           service-worker update prompt
 │  ├─ src/lib/integrations/  thesession, gdrive, youtube, spotify, sharetarget, ...
-│  ├─ src/lib/audio/         PlayerAdapter impls, OPFS cache, trim editor
+│  ├─ src/lib/audio/         PlayerAdapter impls, OPFS cache, trim editor, abcjs synth + WAV encoder
 │  ├─ src/lib/ui/            components (PieceCard, TagInput, SkillSlider, Fab, Modal, ...)
 │  ├─ src/routes/            / (list), /piece/[id], /shuffle, /settings, /link-device
 │  ├─ src/service-worker/    precache + cache-first app shell (own tsconfig)
-│  └─ static/                manifest.webmanifest, icons/
+│  └─ static/                manifest.webmanifest, icons/, soundfont/ (synth samples, see §14)
 ├─ server/                   (later) Hono backend + Dockerfile + compose
 └─ spikes/                   M0 manual test guide (spike code: app/src/routes/spike, app/src/lib/spike)
 ```
@@ -852,6 +867,44 @@ M6 notes:
   Drive setup with a stubbed Google). The user's real library was imported in a scratch
   Playwright run that opened every piece and dealt Shuffle cards with no errors.
 
+**Post-M6: synthesized playback of thesession settings** (the user's top priority; decisions in
+§14 "Synthesized playback")
+- [x] A thesession link with a chosen setting plays it synthesized (abcjs → WAV → OPFS →
+      `HtmlAudioAdapter`) in the mini-player, Shuffle and the trim editor, with the same speed,
+      loop and trim controls; "♪ Synth" marks it everywhere
+- [x] Speed re-renders at the new tempo (stretched meanwhile), keeping the place in the tune
+- [x] Default tempo per tune type when the ABC has no `Q:`; times through (default 2); instrument;
+      chord accompaniment; options per device in Settings and the recording's Edit dialog
+- [x] Offline after the first play: tune ABC from the integration cache, samples from the service
+      worker's soundfont cache, renderings from OPFS
+- [x] Show notation in the thesession recording's Edit dialog, with the playing note highlighted
+- [ ] Transposition: `SynthAdapter.setPitchShift` re-renders with abcjs' `midiTranspose`, but no UI
+      offers it yet (it fits the M8 key-transposition item)
+
+Post-M6 notes:
+- Domain (`domain/synth.ts`, pure): instruments and their sampled ranges, `TUNE_TYPES` (meter and
+  default tempo), `parseTempo`, `buildTuneAbc` (header, body × times through, restating K/M/L when
+  the body changes them), `renderRequest`, `synthCacheKey`/`synthCacheFamily`, `synthTarget`;
+  `clipPlayback` in `domain/providers.ts` adds the `synth` playback kind. Browser half:
+  `audio/synth.ts` (`renderTune`, `fitToSoundfont`), `audio/wav.ts` (`encodeWav`),
+  `audio/synth-adapter.ts`, `store/synth.svelte.ts` (options, availability, render + cache +
+  prune). UI: `SynthOptions.svelte`, `Notation.svelte`; Recordings, ClipDialog, TrimDialog,
+  ShufflePlayer, PlayerBar and Settings use the clip-level playback. The service worker caches
+  `/soundfont/` at runtime. `scripts/fetch-soundfont.js` fetches the samples.
+- Tests: `domain/synth.test.ts` (tempo defaults by type, `Q:` parsing, ABC building and times
+  through, keys, cache keys, option normalizing, pitch folding, `synthTarget`, `clipPlayback`),
+  `audio/wav.test.ts` (header, interleaving, mono mix, normalizing, clamping) and
+  `audio/synth-adapter.test.ts` (tune time, trim, stretch-then-swap at the same place, debounced
+  re-renders, option/pitch re-renders, `fitToSoundfont`). `e2e/synth.test.ts` (mobile and
+  desktop, real abcjs and samples in headless Chromium): plays in the mini-player with a duration
+  of 2× through at the reel default (77 s for Cooley's), the cached rendering is loud with no gaps,
+  75% re-renders in place and runs at 0.75 s a second, loop, the trim editor (waveform, preview,
+  save) and a trimmed play stopping at its end; times through, instrument and chords re-render,
+  notation draws, options persist; Shuffle plays it (and re-renders at 60%), and comes up on a real
+  recording first; offline after one play with thesession.org and the samples cut off (re-rendering
+  at 90% from the service worker's cache; a control run with that cache deleted fails); offline
+  with nothing cached, the link opens thesession.org.
+
 **M7: Backend (as needed)**
 - [ ] Self-hosted sync server; migrate the doc off the public relay
 - [ ] yt-dlp extraction → asset store → offline YouTube clips with waveform
@@ -862,7 +915,8 @@ M6 notes:
 - [ ] High-quality time-stretch/pitch-shift engine (better slow-down, key transposition)
 - [ ] jigripper identification of untitled recordings (it appears to run in the browser)
 - [ ] folkfriend deep links
-- [ ] ABC rendering (abcjs) of thesession settings
+- [x] ABC rendering (abcjs) of thesession settings: "Show notation" in the thesession recording's
+      Edit dialog (post-M6). First notes are still shown as text.
 - [ ] Fuzzy and full-text search over descriptions
 - [ ] E2EE for the sync relay (or migrate to Evolu if this becomes important)
 
@@ -1222,6 +1276,80 @@ M6 notes:
   project number) without blocking.
 - **Error page:** `src/hooks.client.ts` returns the thrown error's own message for unexpected
   errors (there's no server to hide details from); `+error.svelte` shows it, with "Back to list".
+
+**Decided for synthesized playback (2026-10-22)**
+
+- **Which recordings synthesize:** a `thesession:tune:{id}` clip on a piece whose
+  `external.thesession` has that tune id and a `settingId` (`synthTarget`). Set links, links to
+  another tune, and tunes with no chosen setting keep opening thesession.org. It plays in the app
+  when the tune is in the integration cache or we're online to fetch it (`clipPlayback`); offline
+  and never loaded, it links out. The key shown is the clip's, i.e. the setting's (§5).
+- **Not a real recording:** "♪ Synth" marks it on the clip row, the mini-player and Shuffle. It
+  doesn't count for "has recordings" or fold the import panel (§14 M4), Split doesn't offer it, and
+  it has no "Keep offline" (it can always be rendered again). Shuffle comes up on the first *real*
+  recording, and offers the synth ("♪ thesession.org (synth)") in its picker or alone.
+- **abcjs 6.7**, loaded with `import()` on first use (a separate ~500 KB chunk, precached like
+  every immutable chunk). We parse with `parseOnly`, build the sequence with `setUpAudio` (melody
+  program, `chordsOff`, `midiTranspose`), fit it to our samples, and render with `CreateSynth`
+  (`init({ sequence, millisecondsPerMeasure })` + `prime`). abcjs is given a stand-in AudioContext
+  that decodes through an `OfflineAudioContext` at 32 kHz and makes plain `AudioBuffer`s, so no
+  real AudioContext is needed: no autoplay-policy wait (Shuffle renders a card before any tap) and
+  the sample rate is ours. The buffer is mixed to mono, normalized to a 0.89 peak and encoded as
+  16-bit WAV (`encodeWav`): about 64 KB a second, ~5 MB for a reel twice through. abcjs keeps
+  failed sample loads as rejected promises, so a failed render clears its sample cache.
+- **The tune's ABC:** thesession's body gets a header: `X`, `T` (tune name), `R` (type), `M` from
+  the type, `L:1/8`, `Q:` unless the body has its own, `K:` from the setting's key; `!` becomes a
+  line break. The body is repeated for the times through, on new lines; abcjs expands its own
+  repeats and endings each time. A body that changes key, meter or note length part-way gets the
+  header's restated before each repeat.
+- **Default tempos** (moderate session tempos, a bit steady for learning; the speed control goes
+  from there), as `Q:` values: reel 1/2=100, jig 3/8=110, slip jig 3/8=115, hornpipe 1/2=80,
+  polka 1/4=130, slide 3/8=130, waltz 1/4=120, barndance 1/2=85, strathspey 1/4=120, mazurka
+  1/4=120, three-two 1/2=90, anything else 4/4 at 1/4=120. Meters: reel, hornpipe, barndance,
+  strathspey 4/4; jig 6/8; slip jig 9/8; slide 12/8; polka 2/4; waltz, mazurka 3/4; three-two 3/2.
+- **Speed re-renders** (`SynthAdapter`): rendering at the target tempo sounds far better than
+  stretching synthesized notes. Renders are keyed to the rate rounded to 1% and start 300 ms after
+  the speed settles (±5% taps). Until the new one is ready (a fraction of a second; instant when
+  cached) the current one plays at the corrected rate with pitch preserved, then the new one
+  swaps in at the same place in the tune, still playing. The adapter reports *tune time* (media
+  time × rendered tempo) and converts bounds and seeks back, so the player, the speed UI, loop and
+  trims are the same as for audio, and a clip's trim is stored in tune seconds at 100%. The trim
+  editor draws the 100% rendering. The player re-renders in place when the options change or the
+  piece's setting changes.
+- **Audio cache keys:** `synth:v1:s{settingId}:{FNV hash of the full ABC}:{instrument}:{chords|
+  melody}[:t{semitones}]@{tempo}`, so an edited setting, other times through or options never reuse
+  a stale rendering. After each render we keep the 3 newest renderings of that tune and options
+  and 24 synth renderings in all (they're regenerable); "Remove downloaded recordings" drops them
+  too.
+- **Options are device-local** (`localStorage`, `tunejournal.synth`), like the speed: they're
+  listening preferences, and a phone and a laptop may want different instruments. Defaults: fiddle,
+  2 times through, chords off (few thesession settings have chord symbols, and the piano's
+  oom-pah can mask the tune). No metronome: abcjs' drum track needs percussion samples we don't
+  ship, so it's left for later.
+- **Soundfont:** a subset of FluidR3_GM (CC BY 3.0) from gleitz/midi-js-soundfonts, in abcjs'
+  per-note MP3 layout, self-hosted in `static/soundfont/` (README there): violin G3–E6, flute
+  C4–A6, whistle C5–D7 (played an octave above written pitch, as tin whistle music is written),
+  accordion F3–E6, piano C2–E6 (also chords and bass): 184 files, 4.4 MB on the server. Notes
+  outside a range are folded in by octaves (`fitToSoundfont`), so no sample is ever missing, and a
+  setting's own `%%MIDI program` is overridden. Per-instrument onset offsets (90 ms for the
+  slow-bowing violin, ~30 ms for the MP3 lead-in elsewhere) put notes on the beat. The **service
+  worker doesn't precache** the samples (that would download 4.4 MB on every app update): it caches
+  each `/soundfont/` file the first time it's fetched, cache-first, in `tunejournal-soundfont-v1`,
+  which survives app updates. A device downloads only the notes its tunes use (~25 KB each, a few
+  hundred KB per instrument).
+- **Offline story:** after one play online, a synthesized tune plays offline at any speed or
+  option already rendered (OPFS), and renders anew at other speeds from the cached ABC and samples.
+  An instrument never heard on this device can't render offline; the error says to play it once
+  online. Offline with the tune never loaded, the link opens thesession.org (which also fails, as
+  any link does offline).
+- **Notation** ("Show notation" in the thesession recording's Edit dialog) draws the setting once
+  through with `renderAbc`, and highlights the note being played from abcjs' `setTiming` events at
+  the 100% tempo, using tune time modulo one time through. The first-notes text stays text.
+- **Transposition** is wired but not offered: `setPitchShift(semitones)` on the synth adapter
+  re-renders with `midiTranspose` (a cache-key part). A UI belongs with the M8 key-transposition
+  work, which would also cover audio.
+- **e2e:** `mockTheSession` now routes on the browser context. Context routes still answer when
+  the context is offline, so offline tests also abort thesession.org (and the samples) explicitly.
 
 **Still open**
 

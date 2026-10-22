@@ -24,6 +24,8 @@ export interface PlayerSnapshot {
 	/** The whole media's length, once known. */
 	duration?: number;
 	playing: boolean;
+	/** `synth`: the tempo (× the tune's 100%) of the rendering playing; the rest is stretched. */
+	renderedTempo?: number;
 }
 
 export interface PlayerAdapter {

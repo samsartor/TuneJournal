@@ -10,9 +10,10 @@
 	import { player } from '#lib/audio/player.svelte.ts';
 	import type { LibraryIndex } from '#lib/domain/derived.ts';
 	import { formatKey } from '#lib/domain/key.ts';
-	import { PROVIDERS, isPlayable, recordingTitle } from '#lib/domain/providers.ts';
+	import { PROVIDERS, recordingTitle } from '#lib/domain/providers.ts';
 	import type { ClipId, Piece } from '#lib/domain/types.ts';
 	import { oembed } from '#lib/store/oembed.svelte.ts';
+	import { synth } from '#lib/store/synth.svelte.ts';
 	import ProviderIcon from './ProviderIcon.svelte';
 	import SpeedControl from './SpeedControl.svelte';
 
@@ -21,12 +22,15 @@
 	let videoHost = $state<HTMLElement>();
 
 	const clips = $derived(index.clipsOf(piece));
-	const playable = $derived(clips.filter(({ source }) => isPlayable(source)));
-	const links = $derived(clips.filter(({ source }) => !isPlayable(source)));
+	const kinds = $derived(new Map(clips.map((c) => [c.clip.id, synth.playback(piece, c.source)])));
+	const playable = $derived(clips.filter((c) => kinds.get(c.clip.id) !== 'link'));
+	const links = $derived(clips.filter((c) => kinds.get(c.clip.id) === 'link'));
+	/** A real recording comes up first; a synthesized setting only when there's nothing else. */
+	const preferred = $derived(playable.find((c) => kinds.get(c.clip.id) !== 'synth') ?? playable[0]);
 	const pieceKey = $derived(index.effectiveKey(piece));
 
 	let chosen = $state<ClipId>();
-	const selected = $derived(playable.find((c) => c.clip.id === chosen) ?? playable[0]);
+	const selected = $derived(playable.find((c) => c.clip.id === chosen) ?? preferred);
 	const selectedId = $derived(selected?.clip.id);
 	const current = $derived(!!selectedId && player.isCurrent(piece.id, selectedId));
 	const bounds = $derived(player.bounds);
@@ -44,7 +48,8 @@
 
 	function optionLabel(c: (typeof clips)[number]) {
 		const key = otherKey(c);
-		return key ? `${titleOf(c)} · in ${formatKey(key)}` : titleOf(c);
+		const title = kinds.get(c.clip.id) === 'synth' ? `♪ ${titleOf(c)} (synth)` : titleOf(c);
+		return key ? `${title} · in ${formatKey(key)}` : title;
 	}
 
 	// The YouTube player needs somewhere to live; the mini-player bar isn't shown in Shuffle.
@@ -74,6 +79,7 @@
 	data-rate={player.rate}
 	data-loop={player.loop}
 	data-kind={current ? player.kind : ''}
+	data-rendered-tempo={current ? (player.renderedTempo ?? '') : ''}
 >
 	{#if selected}
 		<div
@@ -97,6 +103,11 @@
 				<p class="only" data-testid="shuffle-recording">
 					<ProviderIcon provider={selected.source.provider} />
 					<span>{titleOf(selected)}</span>
+					{#if kinds.get(selected.clip.id) === 'synth'}<span
+							class="synth"
+							data-testid="synth-badge"
+							title="Synthesized from the setting’s ABC, not a real recording">♪ Synth</span
+						>{/if}
 				</p>
 			{/if}
 			{#if otherKey(selected)}
@@ -214,6 +225,14 @@
 
 	.pick select {
 		width: 100%;
+	}
+
+	.synth {
+		padding: 0 0.4rem;
+		border-radius: 999px;
+		background: var(--color-accent-soft);
+		font-size: 0.8125rem;
+		white-space: nowrap;
 	}
 
 	.only {

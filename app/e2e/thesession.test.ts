@@ -43,10 +43,17 @@ test('search fills title, type tag, link, key and first notes from a setting', a
 	await expect(detail.getByTestId('first-notes')).toHaveText(
 		/F \| CGGC G2 CG \| G2 FG BGFE\s+from thesession\.org/
 	);
-	await expect(detail.getByRole('link', { name: 'Open thesession.org (new tab)' })).toHaveAttribute(
+	// With a setting chosen, the link plays it synthesized (e2e/synth.test.ts); its menu still
+	// opens thesession.org.
+	const link = detail.getByRole('listitem', { name: 'thesession.org' });
+	await expect(link.getByRole('button', { name: 'Play thesession.org' })).toBeVisible();
+	await expect(link.getByTestId('synth-badge')).toBeVisible();
+	await link.getByRole('button', { name: /^Actions for/ }).click();
+	await expect(page.getByRole('menuitem', { name: 'Open link ↗' })).toHaveAttribute(
 		'href',
 		'https://thesession.org/tunes/1'
 	);
+	await page.keyboard.press('Escape');
 	await expect(detail.getByTestId('aliases')).toContainText('The Tulla');
 	await expect(detail.getByText('(E min ×2, E dor ×1)')).toBeVisible();
 	await expect(detail.getByText('6,826')).toBeVisible();

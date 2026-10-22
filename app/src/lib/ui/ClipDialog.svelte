@@ -10,16 +10,20 @@
 	import { resolve } from '$app/paths';
 	import { hasKey } from '#lib/domain/derived.ts';
 	import { formatKey } from '#lib/domain/key.ts';
-	import { PROVIDERS, isPlayable, openLinkOf, recordingTitle } from '#lib/domain/providers.ts';
+	import { PROVIDERS, openLinkOf, recordingTitle } from '#lib/domain/providers.ts';
 	import { relinkClip, updateClip, type ClipPatch } from '#lib/domain/recordings.ts';
+	import { synthTarget } from '#lib/domain/synth.ts';
 	import { tuneClipId } from '#lib/domain/thesession.ts';
 	import type { ClipId, PieceId } from '#lib/domain/types.ts';
 	import { detectLink } from '#lib/integrations/links.ts';
 	import { library } from '#lib/store/library.svelte.ts';
 	import { oembed } from '#lib/store/oembed.svelte.ts';
+	import { synth } from '#lib/store/synth.svelte.ts';
 	import { theSession } from '#lib/store/thesession.svelte.ts';
 	import KeyInput from './KeyInput.svelte';
+	import Notation from './Notation.svelte';
 	import ProviderIcon from './ProviderIcon.svelte';
+	import SynthOptions from './SynthOptions.svelte';
 	import TheSessionSearch from './TheSessionSearch.svelte';
 	import { sourceFromLink } from './recordings.ts';
 
@@ -71,6 +75,9 @@
 			!['upload', 'gdrive', 'grecorder'].includes(source.provider)
 	);
 	const openHref = $derived(source ? openLinkOf(source) : undefined);
+	/** The setting this thesession link plays, synthesized. */
+	const synthOf = $derived(piece && source ? synthTarget(piece, source) : undefined);
+	let showNotation = $state(false);
 
 	// svelte-ignore state_referenced_locally
 	let title = $state(clip?.title ?? '');
@@ -214,6 +221,29 @@
 						</div>
 					{/if}
 				</div>
+				{#if synthOf}
+					<div class="field" role="group" aria-labelledby="{uid}-synth">
+						<span class="label" id="{uid}-synth">♪ Synthesized playback</span>
+						<p class="muted small">
+							Plays this setting from its ABC, so it isn’t a real recording. These options apply on
+							this device.
+						</p>
+						<SynthOptions />
+						<div class="buttons">
+							<button
+								type="button"
+								class="btn-quiet"
+								aria-pressed={showNotation}
+								onclick={() => (showNotation = !showNotation)}>Show notation</button
+							>
+						</div>
+						{#if showNotation}
+							{#key `${synthOf.tuneId}:${synthOf.settingId}`}
+								<Notation target={synthOf} {pieceId} {clipId} />
+							{/key}
+						{/if}
+					</div>
+				{/if}
 			{:else if editableLink}
 				<form class="field" onsubmit={updateLink} novalidate>
 					<label for="{uid}-url">Link</label>
@@ -276,7 +306,7 @@
 				</div>
 			{/if}
 
-			{#if ontrim && isPlayable(source)}
+			{#if ontrim && synth.playable(piece, source)}
 				<div class="buttons">
 					<button
 						type="button"

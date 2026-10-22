@@ -5,9 +5,10 @@ import type { Provider, Source } from './types.ts';
 
 /**
  * How a source plays: `file` through <audio> (a cached blob, or a direct audio URL), `youtube`
- * through the IFrame player, and `link` by opening the URL in a new tab.
+ * through the IFrame player, `synth` as audio synthesized from a thesession.org setting's ABC
+ * (`clipPlayback`), and `link` by opening the URL in a new tab.
  */
-export type Playback = 'file' | 'youtube' | 'link';
+export type Playback = 'file' | 'youtube' | 'synth' | 'link';
 
 export interface ProviderInfo {
 	label: string;
@@ -54,7 +55,36 @@ export function playbackOf(source: Pick<Source, 'provider' | 'url' | 'mime'>): P
 	}
 }
 
-/** Plays inside the app (rather than only opening elsewhere). */
+/** What's known about synthesizing a thesession link (see domain/synth.ts `synthTarget`). */
+export interface SynthAvailability {
+	/** The piece's chosen setting of the linked tune, if it has one. */
+	settingId?: number;
+	/** Its ABC is on this device (integration cache) or can be fetched (online). */
+	available: boolean;
+}
+
+/**
+ * How a clip plays, all things considered: like its source, except that a thesession tune link
+ * with a chosen setting whose ABC is at hand plays a synthesized rendering of that setting in the
+ * app. With no setting, or offline before the tune was ever loaded, it opens thesession.org.
+ */
+export function clipPlayback(
+	source: Pick<Source, 'provider' | 'url' | 'mime'>,
+	synth?: SynthAvailability
+): Playback {
+	const kind = playbackOf(source);
+	if (
+		kind === 'link' &&
+		source.provider === 'thesession' &&
+		synth?.settingId !== undefined &&
+		synth.available
+	) {
+		return 'synth';
+	}
+	return kind;
+}
+
+/** Plays inside the app (rather than only opening elsewhere). A real recording, not a synth. */
 export function isPlayable(source: Pick<Source, 'provider' | 'url' | 'mime'>): boolean {
 	return playbackOf(source) !== 'link';
 }

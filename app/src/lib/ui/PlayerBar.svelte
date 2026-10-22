@@ -76,6 +76,7 @@
 		data-rate={player.rate}
 		data-loop={player.loop}
 		data-kind={player.kind}
+		data-rendered-tempo={player.renderedTempo ?? ''}
 	>
 		<div class="row">
 			<div class="video" class:shown={player.kind === 'youtube'} bind:this={videoHost}></div>
@@ -94,6 +95,11 @@
 				<div class="names">
 					{#if source}<ProviderIcon provider={source.provider} />{/if}
 					<span class="title" data-testid="player-title">{title}</span>
+					{#if player.kind === 'synth'}<span
+							class="synth"
+							data-testid="synth-badge"
+							title="Synthesized from the setting’s ABC, not a real recording">♪ Synth</span
+						>{/if}
 					{#if piece}
 						<a class="piece" href={resolve('/(main)/piece/[id]', { id: piece.id })}
 							>{piece.title ?? untitled(piece.kind)}{#if key}&nbsp;· {formatKey(key)}{/if}</a
@@ -240,6 +246,15 @@
 		white-space: nowrap;
 		min-width: 0;
 		flex: 0 1 auto;
+	}
+
+	.synth {
+		flex: none;
+		padding: 0 0.4rem;
+		border-radius: 999px;
+		background: var(--color-accent-soft);
+		font-size: 0.75rem;
+		white-space: nowrap;
 	}
 
 	.piece {

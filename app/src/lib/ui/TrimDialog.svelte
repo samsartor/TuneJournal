@@ -7,11 +7,12 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { player } from '#lib/audio/player.svelte.ts';
-	import { playbackOf } from '#lib/domain/providers.ts';
 	import { updateClip } from '#lib/domain/recordings.ts';
+	import { synthTarget } from '#lib/domain/synth.ts';
 	import type { ClipId, PieceId } from '#lib/domain/types.ts';
 	import { audioFiles } from '#lib/store/audio.svelte.ts';
 	import { library } from '#lib/store/library.svelte.ts';
+	import { synth } from '#lib/store/synth.svelte.ts';
 	import TrimEditor, { type TrimRange } from './TrimEditor.svelte';
 	import { ui } from './state.svelte.ts';
 
@@ -26,7 +27,9 @@
 	const clip = $derived(library.doc?.pieces[pieceId]?.clips[clipId]);
 	const source = $derived(clip ? library.doc?.sources[clip.sourceId] : undefined);
 	// svelte-ignore state_referenced_locally
-	const kind = source ? playbackOf(source) : undefined;
+	const piece = library.doc?.pieces[pieceId];
+	// svelte-ignore state_referenced_locally
+	const kind = piece && source ? synth.playback(piece, source) : undefined;
 
 	let blob = $state.raw<Blob>();
 	let error = $state('');
@@ -39,7 +42,14 @@
 			// The editor's transport plays through the global player, paused until asked.
 			await player.open(pieceId, clipId, { autoplay: false });
 			if (player.error) throw new Error(player.error);
-			if (kind === 'file') {
+			const target = kind === 'synth' && piece && source ? synthTarget(piece, source) : undefined;
+			if (target) {
+				// The 100% rendering: its seconds are tune time, which the trim is kept in.
+				blob = await synth.render(target, 1).catch((e) => {
+					console.warn('No waveform', e);
+					return undefined;
+				});
+			} else if (kind === 'file') {
 				// Only for drawing the waveform; the editor still works without it.
 				blob = await audioFiles.blobFor(source).catch((e) => {
 					console.warn('No waveform', e);

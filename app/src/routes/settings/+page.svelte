@@ -6,10 +6,12 @@
 	import { previousLibraryUrls } from '#lib/store/repo.ts';
 	import { theSession } from '#lib/store/thesession.svelte.ts';
 	import { isLocalOnly } from '#lib/domain/providers.ts';
+	import { isSynthCacheKey } from '#lib/domain/synth.ts';
 	import { audioFiles } from '#lib/store/audio.svelte.ts';
 	import { oembed } from '#lib/store/oembed.svelte.ts';
 	import DriveSettings from '#lib/ui/DriveSettings.svelte';
 	import SyncIndicator from '#lib/ui/SyncIndicator.svelte';
+	import SynthOptions from '#lib/ui/SynthOptions.svelte';
 	import { ui } from '#lib/ui/state.svelte.ts';
 
 	let usage = $state<{ used: number; quota: number }>();
@@ -62,6 +64,8 @@
 		try {
 			const sources = library.doc?.sources ?? {};
 			const freed = await audioFiles.clearUnkept((id) => {
+				// Synthesized tunes are rendered again when played.
+				if (isSynthCacheKey(id)) return false;
 				const source = sources[id as keyof typeof sources];
 				// Unknown ids are shared files still in the inbox, or not synced yet: keep them.
 				return !source || isLocalOnly(source);
@@ -229,6 +233,15 @@
 					: 'Storage isn’t marked persistent yet. The browser may clear it if space runs low, so keep backups.'}
 			</p>
 		{/if}
+	</section>
+
+	<section>
+		<h2>Synthesized playback</h2>
+		<p class="muted small">
+			A thesession.org link with a chosen setting plays a synthesized version of that setting,
+			marked ♪ Synth. These options apply on this device; the speed control sets the tempo.
+		</p>
+		<SynthOptions />
 	</section>
 
 	<DriveSettings />

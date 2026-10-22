@@ -22,6 +22,7 @@
 	import { gdrive } from '#lib/store/gdrive.svelte.ts';
 	import { library } from '#lib/store/library.svelte.ts';
 	import { oembed } from '#lib/store/oembed.svelte.ts';
+	import { synth } from '#lib/store/synth.svelte.ts';
 	import AddRecording from './AddRecording.svelte';
 	import ClipDialog from './ClipDialog.svelte';
 	import Menu from './Menu.svelte';
@@ -105,7 +106,8 @@
 			{#each clips as c, i (c.clip.id)}
 				{@const title = titleOf(c)}
 				{@const info = PROVIDERS[c.source.provider]}
-				{@const playable = isPlayable(c.source)}
+				{@const kind = synth.playback(piece, c.source)}
+				{@const playable = kind !== 'link'}
 				{@const current = player.isCurrent(piece.id, c.clip.id)}
 				{@const trim = trimLabel(c.clip, c.source.durationSec)}
 				{@const key = library.index?.clipKey(piece, c.clip)}
@@ -163,6 +165,11 @@
 						<span class="meta">
 							<ProviderIcon provider={c.source.provider} />
 							<span>{info.label}{playable ? '' : ' ↗'}</span>
+							{#if kind === 'synth'}<span
+									class="badge synth"
+									data-testid="synth-badge"
+									title="Synthesized from the setting’s ABC, not a real recording">♪ Synth</span
+								>{/if}
 							{#if trim}<span data-testid="clip-trim">{trim}</span>
 							{:else if c.source.durationSec}<span>{formatTime(c.source.durationSec)}</span>{/if}
 							{#if key && c.clip.key}<span class="key">{formatKey(key)}</span>{/if}
@@ -379,6 +386,10 @@
 		border-radius: 999px;
 		background: var(--color-accent-soft);
 		color: var(--color-text);
+	}
+
+	.badge.synth {
+		color: var(--color-accent);
 	}
 
 	.badge.warn {
