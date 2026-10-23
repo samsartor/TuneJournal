@@ -3,6 +3,7 @@
 // render (header, tempo, times through), the instruments and their sample ranges, and the audio
 // cache key of a rendering. The browser half (abcjs, Web Audio) is in audio/synth.ts.
 
+import { HUMANIZE_DEFAULTS, humanizeKey, normalizeHumanize, type Humanize } from './humanize.ts';
 import { parseKey } from './key.ts';
 import type { Piece, Source } from './types.ts';
 
@@ -59,12 +60,15 @@ export interface SynthOptions {
 	timesThrough: number;
 	/** Play the setting's chord symbols (if it has any) on piano with a bass. */
 	chords: boolean;
+	/** Lilt, accent and attack on the strong quavers, and the style (see humanize.ts). */
+	humanize: Humanize;
 }
 
 export const DEFAULT_SYNTH_OPTIONS: SynthOptions = {
 	instrument: 'fiddle',
 	timesThrough: 2,
-	chords: false
+	chords: false,
+	humanize: HUMANIZE_DEFAULTS
 };
 
 export const MAX_TIMES_THROUGH = 4;
@@ -80,7 +84,8 @@ export function normalizeSynthOptions(value: unknown): SynthOptions {
 				: DEFAULT_SYNTH_OPTIONS.instrument,
 		timesThrough:
 			times >= 1 && times <= MAX_TIMES_THROUGH ? times : DEFAULT_SYNTH_OPTIONS.timesThrough,
-		chords: typeof v.chords === 'boolean' ? v.chords : DEFAULT_SYNTH_OPTIONS.chords
+		chords: typeof v.chords === 'boolean' ? v.chords : DEFAULT_SYNTH_OPTIONS.chords,
+		humanize: normalizeHumanize(v.humanize)
 	};
 }
 
@@ -171,6 +176,8 @@ export interface TuneAbc {
 	tempo: Tempo;
 	/** Whether that tempo came from the ABC itself. */
 	ownTempo: boolean;
+	/** How many copies of the body `abc` has (each starts with the same pickup). */
+	timesThrough: number;
 }
 
 /** Fields in a body that change the key, meter or note length for the rest of the tune. */
@@ -207,7 +214,12 @@ export function buildTuneAbc(setting: SettingAbc, timesThrough = 2): TuneAbc {
 	const restate = RESETTING_FIELD.test(body) ? `M:${type.meter}\nL:1/8\nK:${key}\n` : '';
 	const times = Math.max(1, Math.min(MAX_TIMES_THROUGH, Math.round(timesThrough)));
 	const copies = Array.from({ length: times }, (_, i) => (i > 0 ? restate : '') + body);
-	return { abc: `${header.join('\n')}\n${copies.join('\n')}\n`, tempo, ownTempo: !!own };
+	return {
+		abc: `${header.join('\n')}\n${copies.join('\n')}\n`,
+		tempo,
+		ownTempo: !!own,
+		timesThrough: times
+	};
 }
 
 /**
@@ -223,6 +235,9 @@ export interface RenderRequest {
 	chords: boolean;
 	/** Semitones (the reserved pitch-shift hook). */
 	transpose: number;
+	/** Copies of the tune in `abc` (already in its hash; humanization finds pickups with it). */
+	timesThrough: number;
+	humanize: Humanize;
 }
 
 export function roundTempo(rate: number): number {
@@ -241,7 +256,9 @@ export function renderRequest(
 		tempo: roundTempo(rate),
 		instrument: options.instrument,
 		chords: options.chords,
-		transpose: Math.round(transpose)
+		transpose: Math.round(transpose),
+		timesThrough: tune.timesThrough,
+		humanize: options.humanize
 	};
 }
 
@@ -262,13 +279,15 @@ export const SYNTH_CACHE_PREFIX = 'synth:';
  * one tune at other speeds share it, so older ones can be pruned.
  */
 export function synthCacheFamily(settingId: number, request: RenderRequest): string {
-	const parts = [
+	const parts: string[] = [
 		`v${SYNTH_VERSION}`,
 		`s${settingId}`,
 		hashText(request.abc),
 		request.instrument,
 		request.chords ? 'chords' : 'melody',
-		...(request.transpose ? [`t${request.transpose}`] : [])
+		...(request.transpose ? [`t${request.transpose}`] : []),
+		// None when off, so plain renderings keep their keys.
+		...[humanizeKey(request.humanize)].filter((part) => part !== undefined)
 	];
 	return `${SYNTH_CACHE_PREFIX}${parts.join(':')}`;
 }

@@ -40,19 +40,48 @@ async function addCooleysSetting(page: Page, info: TestInfo) {
 	await expect(page.getByRole('heading', { level: 1, name: "Cooley's" })).toBeVisible();
 }
 
-/**
- * The 100% rendering in the audio cache, decoded: its peak level, the longest stretch with
- * nothing audible (a missing sample would leave a gap), and how far the level dips between notes.
- */
-async function renderedAudio(page: Page) {
+/** The synth renderings in the audio cache (OPFS), by cache key. */
+async function cachedRenderings(page: Page): Promise<string[]> {
 	return page.evaluate(async () => {
+		const root = await navigator.storage.getDirectory();
+		const dir = await root.getDirectoryHandle('audio', { create: true });
+		const names: string[] = [];
+		for await (const [name] of dir as unknown as AsyncIterable<[string, unknown]>) {
+			const id = decodeURIComponent(name);
+			if (id.startsWith('synth:')) names.push(id);
+		}
+		return names;
+	});
+}
+
+/**
+ * The 100% rendering in the audio cache (the one whose key matches `pattern`, if given), decoded:
+ * its peak level, the longest stretch with nothing audible (a missing sample would leave a gap),
+ * how far the level dips between notes, where the off-beat quavers start, and a checksum.
+ */
+async function renderedAudio(page: Page, pattern?: RegExp) {
+	// The file can be listed before it's completely written: try again for a while.
+	for (let attempt = 0; ; attempt++) {
+		try {
+			return await decodeRendering(page, pattern);
+		} catch (e) {
+			if (attempt >= 20) throw e;
+			await page.waitForTimeout(250);
+		}
+	}
+}
+
+async function decodeRendering(page: Page, pattern?: RegExp) {
+	return page.evaluate(async (source) => {
+		const match = source ? new RegExp(source) : undefined;
 		const root = await navigator.storage.getDirectory();
 		const dir = await root.getDirectoryHandle('audio');
 		let file: File | undefined;
 		for await (const [name, handle] of dir as unknown as AsyncIterable<
 			[string, FileSystemFileHandle]
 		>) {
-			if (decodeURIComponent(name).startsWith('synth:') && name.endsWith('%401.00')) {
+			const id = decodeURIComponent(name);
+			if (id.startsWith('synth:') && id.endsWith('@1.00') && (!match || match.test(id))) {
 				file = await handle.getFile();
 			}
 		}
@@ -69,10 +98,11 @@ async function renderedAudio(page: Page) {
 			quiet = v < 0.01 ? quiet + 1 : 0;
 			if (quiet > longestQuiet) longestQuiet = quiet;
 		}
-		// Notes are separate: at each quaver line (0.15 s at 1.2 s a whole note) the level, in 5 ms
-		// windows, drops well below that quaver's loudest. Notes that ring on past their end (a long
-		// release, or an early start) leave the level flat across the line. Median over the tune,
-		// since a crotchet has no break in the middle.
+		// Notes are separate: at each beat (a crotchet, 0.3 s at 1.2 s a whole note) the level, in
+		// 5 ms windows, drops well below the loudest of the quaver before. Notes that ring on past
+		// their end (a long release, or an early start) leave the level flat across the line. Beats
+		// rather than every quaver, since the lilt moves the off-beat quavers but never the beats.
+		// Median over the tune, since a minim has no break in the middle.
 		const rate = buffer.sampleRate;
 		const rms = (from: number) => {
 			const n = Math.round(rate * 0.005);
@@ -82,20 +112,37 @@ async function renderedAudio(page: Page) {
 			return Math.sqrt(sum / n);
 		};
 		const dips: number[] = [];
-		for (let line = 1.2; line < buffer.duration - 1; line += 0.15) {
+		for (let line = 1.2; line < buffer.duration - 1; line += 0.3) {
 			let loudest = 0;
 			for (let t = line - 0.15; t < line - 0.02; t += 0.005) loudest = Math.max(loudest, rms(t));
 			dips.push(Math.min(rms(line - 0.01), rms(line - 0.005), rms(line)) / loudest);
 		}
 		dips.sort((a, b) => a - b);
 		const dipBetweenNotes = dips[dips.length >> 1];
+		// Where the second quaver of each pair starts, after the first (on the beat): the quietest
+		// moment between them, as the first fades out. Bar lines are 0.3 s (the pickup) + 1.2 s × n.
+		const gaps: number[] = [];
+		for (let beat = 0.3 + 2.4; beat < buffer.duration - 2; beat += 0.3) {
+			let quietest = Infinity;
+			let at = 0;
+			for (let t = beat + 0.08; t < beat + 0.24; t += 0.005) {
+				const level = rms(t);
+				if (level < quietest) [quietest, at] = [level, t - beat];
+			}
+			gaps.push(at);
+		}
+		gaps.sort((a, b) => a - b);
+		let checksum = 0;
+		for (let i = 0; i < data.length; i += 7) checksum = (checksum * 31 + data[i] * 1e4) % 1e9;
 		return {
 			peak,
 			silentSeconds: longestQuiet / rate,
 			duration: buffer.duration,
-			dipBetweenNotes
+			dipBetweenNotes,
+			offBeat: gaps[gaps.length >> 1],
+			checksum
 		};
-	});
+	}, pattern?.source);
 }
 
 async function speedControls(page: Page) {
@@ -347,4 +394,80 @@ test('offline, a tune never loaded on this device opens thesession.org instead',
 	await context.setOffline(false);
 	await page.reload();
 	await expect(row.getByTestId('synth-badge')).toBeVisible();
+});
+
+test('humanization: lilt, accent and attack change the rendering', async ({ page }, info) => {
+	test.setTimeout(90_000);
+	await addCooleysSetting(page, info);
+	const row = clip(page, 'thesession.org');
+	await row.getByRole('button', { name: 'Play thesession.org' }).click();
+	const bar = player(page);
+	await expect(bar).toHaveAttribute('data-playing', 'true', { timeout: 20_000 });
+	await bar.getByRole('button', { name: 'Pause' }).click();
+	// The default feel is on: its own rendering, keyed by its settings.
+	const humanized = /:h20,20,15@1\.00$/;
+	await expect.poll(() => cachedRenderings(page)).toContainEqual(expect.stringMatching(humanized));
+
+	await row.getByRole('button', { name: /^Actions for/ }).click();
+	await page.getByRole('menuitem', { name: 'Edit…' }).click();
+	const edit = page.getByRole('dialog', { name: 'Edit recording' });
+	const options = edit.getByRole('group', { name: 'Synthesized playback' });
+	await expect(options.getByLabel('Style')).toHaveValue('irish');
+	await expect(options.getByLabel('Lilt')).toHaveValue('20');
+	await expect(options.locator('output').first()).toHaveText('1.14:1');
+
+	// As written: the plain rendering, with the key it had before humanization existed.
+	await options.getByRole('button', { name: 'As written' }).click();
+	await expect(options.getByLabel('Accent')).toHaveValue('0');
+	const plainKey = /:melody@1\.00$/;
+	await expect
+		.poll(() => cachedRenderings(page), { timeout: 15_000 })
+		.toContainEqual(expect.stringMatching(plainKey));
+	const plain = await renderedAudio(page, plainKey);
+	const defaults = await renderedAudio(page, humanized);
+	expect(defaults.checksum).not.toBe(plain.checksum);
+	// Bar lines don't move, so the tune is just as long.
+	expect(defaults.duration).toBeCloseTo(plain.duration, 3);
+	// Played as written, the off-beat quaver starts a quaver (0.15 s) after the beat.
+	expect(plain.offBeat).toBeGreaterThan(0.13);
+	expect(plain.offBeat).toBeLessThan(0.165);
+
+	// A strong lilt: 80 makes the pairs about 1.73:1, so the off-beat starts ~40 ms later.
+	await options.getByLabel('Lilt').fill('80');
+	await expect(options.locator('output').first()).toHaveText('1.73:1');
+	const lilted = /:h80,0,0@1\.00$/;
+	await expect
+		.poll(() => cachedRenderings(page), { timeout: 15_000 })
+		.toContainEqual(expect.stringMatching(lilted));
+	const lilt = await renderedAudio(page, lilted);
+	expect(lilt.offBeat - plain.offBeat).toBeGreaterThan(0.025);
+	expect(lilt.offBeat - plain.offBeat).toBeLessThan(0.06);
+	expect(lilt.duration).toBeCloseTo(plain.duration, 3);
+	// …and a negative one, the reverse.
+	await options.getByLabel('Lilt').fill('-80');
+	const reversed = /:h-80,0,0@1\.00$/;
+	await expect
+		.poll(() => cachedRenderings(page), { timeout: 15_000 })
+		.toContainEqual(expect.stringMatching(reversed));
+	expect((await renderedAudio(page, reversed)).offBeat - plain.offBeat).toBeLessThan(-0.025);
+
+	// Old-time, with some accent: another rendering.
+	await options.getByLabel('Style').selectOption('oldtime');
+	await options.getByLabel('Accent').fill('50');
+	await expect
+		.poll(() => cachedRenderings(page), { timeout: 15_000 })
+		.toContainEqual(expect.stringMatching(/:h-80,50,0o@1\.00$/));
+	await shot(page, info, 'synth-humanize');
+	await edit.getByRole('button', { name: 'Done' }).click();
+
+	// This device's, kept across reloads, and in Settings too.
+	await page.goto('/settings');
+	const settings = page.getByRole('group', { name: 'Synthesized playback' });
+	await expect(settings.getByLabel('Style')).toHaveValue('oldtime');
+	await expect(settings.getByLabel('Lilt')).toHaveValue('-80');
+	await expect(settings.getByLabel('Accent')).toHaveValue('50');
+	await settings.getByRole('button', { name: 'Default' }).click();
+	await expect(settings.getByLabel('Lilt')).toHaveValue('20');
+	await expect(settings.getByLabel('Attack')).toHaveValue('15');
+	await expect(settings.getByLabel('Style')).toHaveValue('oldtime');
 });

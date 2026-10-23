@@ -482,10 +482,13 @@ RNG, so it's unit-testable.
   recording. Speed re-renders at the new tempo rather than time-stretching (the stretched
   rendering bridges the fraction of a second until then), and the player, trim and playhead all
   work in *tune time* (seconds at 100%), so a trim means the same bars at every speed. Options,
-  per device: instrument (fiddle, flute, whistle, accordion, piano), times through (1–4, default
-  2, the ABC's own repeats honoured) and chord accompaniment; in Settings and in the recording's
-  Edit dialog, which also has **Show notation** (abcjs sheet music, highlighting the note being
-  played). Without a chosen setting, or offline before the tune was ever loaded, the link opens
+  per device: instrument (fiddle, flute, whistle, accordion, piano), style (Irish or Old-time),
+  times through (1–4, default 2, the ABC's own repeats honoured), chord accompaniment, and a
+  **Feel** group of three sliders from −100 to +100 for the strong quavers: **Lilt** (shown as the
+  long:short ratio of a quaver pair, "Even" at 0), **Accent** and **Attack**, with "As written"
+  (all 0) and "Default" buttons. Sliders re-render once they settle. In Settings and in the
+  recording's Edit dialog, which also has **Show notation** (abcjs sheet music, highlighting the
+  note being played). Without a chosen setting, or offline before the tune was ever loaded, the link opens
   thesession.org as before. Decisions in §14 "Synthesized playback".
 - The **trim editor** (Trim, and Split's region picker) has its own transport, since the
   mini-player bar sits behind its dialog: play/pause, a playhead you can tap or drag on the
@@ -1354,7 +1357,8 @@ Post-M6 notes:
   editor draws the 100% rendering. The player re-renders in place when the options change or the
   piece's setting changes.
 - **Audio cache keys:** `synth:v{SYNTH_VERSION}:s{settingId}:{FNV hash of the full ABC}:{instrument}:{chords|
-  melody}[:t{semitones}]@{tempo}`, so an edited setting, other times through or options never reuse
+  melody}[:t{semitones}][:h{lilt},{accent},{attack}[o]]@{tempo}` (the `h` part from §14 "Synth
+  humanization"), so an edited setting, other times through or options never reuse
   a stale rendering. After each render we keep the 3 newest renderings of that tune and options
   and 24 synth renderings in all (they're regenerable); "Remove downloaded recordings" drops them
   too.
@@ -1429,6 +1433,55 @@ Post-M6 notes:
   same for tune results (no notation), and the row only changes its notation. The scrubber is a
   shared `Scrubber` component (player bar, Shuffle, previews). e2e ports can be moved with
   `E2E_PORT` / `E2E_SYNC_PORT` (`e2e/ports.ts`) to run two suites side by side.
+
+**Decided for synth humanization (2026-10-23)**
+
+- **Ours, not abcjs':** a pure pass (`domain/humanize.ts`) over the flat note events from
+  `setUpAudio` (start and duration in whole notes, velocity), before rendering, plus an attack
+  shaper over the rendered buffer. abcjs' own `swing` only works with a `visualObj`, only delays
+  isolated off-beats, and has no accent or attack. abcjs already varies velocity a little (105 on
+  the downbeat, 95 on other crotchet beats, 85 between); ours scales on top of that.
+- **The grid is the quaver**, in groups of 2 in simple meters (`x/4`, `x/2`: reels, hornpipes,
+  barndances, strathspeys, polkas, waltzes, three-twos) and 3 in compound ones (`6/8`, `9/8`,
+  `12/8`, `3/8`: jigs, slip jigs, slides). Strong positions are the first of each group, counting
+  from 1 in the bar: 1 mod 2 (quavers 1, 3, 5, 7 of a reel bar, i.e. every crotchet beat) or
+  1 mod 3 (1, 4, 7, 10). We read "the 1st and 3rd beat" as the first two strong quavers of that
+  rule rather than as crotchets 1 and 3, since the lilt is a quaver-pair thing and abcjs' velocity
+  already marks the bar's first beat. Other meters (5/8, 7/8, x/16) aren't humanized. The meter is
+  the parsed tune's (`getMeterFraction`), which is the thesession type's (§14 synthesized playback).
+- **Bars come from abcjs' sequencer** (`abcjs.synth.sequence`, first voice, repeats expanded) by
+  summing note durations up to each bar line, rather than from start times modulo the bar, since
+  a pickup, a shortened last bar and repeats make the modulo drift. Full and long bars count from
+  their start. A short bar counts back from its end (a pickup) when it starts a time through (the
+  request carries `timesThrough`) or completes the short bar before it (Cooley's `|:D2|…E2:|`);
+  any other short bar counts from its start, as abcjs' own accents do. A pickup group missing its
+  first quaver isn't lilted.
+- **Lilt** is a piecewise-linear time warp per group: the first quaver grows by `lilt/100 × ⅓`
+  of a quaver and the rest of the group shrinks to fit, so group boundaries, bar lines, the tune's
+  length, trims (in tune time) and the notation's bar timing never move. Every note's start and
+  end go through it, so triplets, grace notes, crotchets across groups and the chord/bass tracks
+  all stay consistent and in order. 100 = 2:1 pairs in a reel; negative reverses it. The notation
+  highlight still uses abcjs' even timing, so an off-beat note's highlight leads its sound by a
+  fifteenth of a quaver at the default (10 ms in a reel), a third at 100.
+- **Accent** multiplies velocity: strong ×(1 + k), others ×(1 − k/(group − 1)), k = accent/100 ×
+  0.5, so the average stays about the same; rounded and clamped to 1–127 (abcjs keys sounds by
+  integer velocity; `place-note` maps velocity linearly to gain, v/96). Grace notes are left
+  alone; off-grid notes (triplet middles) count as weak.
+- **Attack**: abcjs can't change a sample's attack, so after rendering, each strong onset (after
+  the warp, in seconds) gets a 50 ms gain envelope on the mixed buffer, `1 + b(1 − x)²`, with
+  b = 2 × attack/100 above 0 (×3 at the onset at 100) or attack/100 below (a fade in from silence
+  at −100), cut short at the next strong onset. Clipping isn't an issue: the buffer is float, and
+  the WAV is normalized to the 0.89 peak afterwards.
+- **Old-time style** puts accent and attack on the last quaver of each group (0 mod 2 in a reel,
+  0 mod 3 in a jig); the lilt is the same. thesession has no old-time type, so it's a per-device
+  choice next to the instrument.
+- **Defaults** (Irish): lilt 20 (pairs 1.14:1), accent 20 (×1.1 / ×0.9), attack 15 (×1.3 at the
+  onset). Stored with the other synth options (`humanize` in `tunejournal.synth`); older stored
+  options get the defaults. At 0, 0, 0 the renderer skips humanization entirely, so the rendering
+  is byte-identical to before (checked against the previous renderer) and its cache key has no
+  `h` part, so existing cached renderings stay valid. The style is in the key only when accent or
+  attack is non-zero. Sliders commit 400 ms after the last movement or on release; previews and
+  the player share the options through the synth store.
 
 **Still open**
 

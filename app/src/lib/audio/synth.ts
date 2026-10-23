@@ -9,6 +9,7 @@
 // a smaller file. The finished buffer is mixed to mono, normalized and encoded as 16-bit WAV.
 
 import type { AudioTrack, AudioTracks, TuneObject } from 'abcjs';
+import { humanizeNotes, isHumanizeOff, shapeAttack, type NoteEvent } from '#lib/domain/humanize.ts';
 import { INSTRUMENTS, SOUNDFONT_RANGES, foldPitch, type RenderRequest } from '#lib/domain/synth.ts';
 import { encodeWav } from './wav.ts';
 
@@ -112,6 +113,23 @@ export function fitToSoundfont(tracks: AudioTrack[], request: RenderRequest): vo
 	}
 }
 
+/** abcjs' sequencer output (`abcjs.synth.sequence`): per voice, its notes and bar lines. */
+type SequencedVoice = { el_type: string; duration?: number }[];
+
+/**
+ * Where each bar starts, in whole notes, in the first voice: abcjs' own sequence with the repeats
+ * expanded, as `setUpAudio` plays it. Its note durations already count triplets and grace notes.
+ */
+export function barStarts(voice: SequencedVoice): number[] {
+	const starts = [0];
+	let t = 0;
+	for (const el of voice) {
+		if (el.el_type === 'note') t += el.duration ?? 0;
+		else if (el.el_type === 'bar' && t > starts[starts.length - 1] + 1e-6) starts.push(t);
+	}
+	return starts.map((x) => Math.round(x * 1e6) / 1e6);
+}
+
 export interface Rendering {
 	blob: Blob;
 	/** Seconds. */
@@ -138,6 +156,21 @@ export async function renderTune(request: RenderRequest, soundFontUrl: string): 
 	}) as AudioTracks;
 	fitToSoundfont(sequence.tracks, request);
 	if (!(sequence.totalDuration > 0)) throw new SynthError('This setting has no notes to play.');
+	// Lilt and accents, before rendering; the attack shapes the rendered buffer afterwards.
+	// Off, nothing changes: the rendering is exactly the plain one.
+	const strongOnsets = isHumanizeOff(request.humanize)
+		? []
+		: humanizeNotes({
+				tracks: sequence.tracks as unknown as NoteEvent[][],
+				meter: tune.getMeterFraction(),
+				barStarts: barStarts(
+					(abcjs.synth.sequence(tune, {}) as unknown as SequencedVoice[])[0] ?? []
+				),
+				total: sequence.totalDuration,
+				copies: request.timesThrough,
+				settings: request.humanize
+			});
+	const secondsPerWhole = request.wholeNote / request.tempo;
 
 	abcjs.synth.registerAudioContext(renderContext(SAMPLE_RATE));
 	const synth = new abcjs.synth.CreateSynth();
@@ -171,6 +204,9 @@ export async function renderTune(request: RenderRequest, soundFontUrl: string): 
 	const channels = Array.from({ length: buffer.numberOfChannels }, (_, i) =>
 		buffer.getChannelData(i)
 	);
+	const onsets = strongOnsets.map((t) => t * secondsPerWhole);
+	for (const channel of channels)
+		shapeAttack(channel, buffer.sampleRate, onsets, request.humanize.attack);
 	const wav = encodeWav(channels, buffer.sampleRate, { mono: true, normalize: PEAK });
 	return { blob: new Blob([wav], { type: 'audio/wav' }), duration: buffer.duration };
 }
