@@ -319,7 +319,7 @@ Notes:
   openable.
 - **Edit modal:**
   - A kind dropdown (Session/Set/Tune/Part).
-  - A title field with a 🔍 thesession search button.
+  - A title field with a 🔍 button that opens the thesession tune picker (§6.3).
   - Description, tags, skill (starts unrated, with a "clear rating" option), and favorite.
   - Key (a tonic + mode picker that also accepts free text) and first notes (ABC text). Both are
     hidden for sets and sessions.
@@ -330,7 +330,8 @@ Notes:
 - **Recordings section:** if there are no clips, a prominent import panel shows the source
   buttons (Drive, Recorder, YouTube, Upload, Link). Once clips exist it collapses to a small
   "+ Add recording". Clips can be dragged to reorder, removed, or trimmed. Each clip's ⋯ menu has
-  **Edit…** (title, key and first notes as played; a thesession link's tune and setting; another
+  **Edit…** (title, key and first notes as played; a thesession link's tune and setting, through
+  the pickers of §6.3; another
   link's URL; Trim), **Open link ↗** (YouTube, Spotify, thesession, the Drive file's page, any
   URL; an upload that's only on this device offers **Download file** instead), Trim…, Move
   up/down, Back up to Drive and Remove.
@@ -345,6 +346,28 @@ Notes:
    `firstNotes` (the first bar or two of its ABC) go on the thesession recording, which the
    piece inherits them from (§5). The recording's Edit… can later pick another tune or setting.
 3. If that thesession tune already exists in the library, offer to open it instead, or to merge.
+
+**The thesession pickers.** Searching (🔍, or the recording's *Change tune…*) and choosing a
+setting (after a tune, or the recording's *Change setting…*) happen in a view of their own rather
+than in a panel inside the dialog:
+- **Mobile:** full screen, with a header (title, × to close, and ‹ back to the results from the
+  setting step), the search box under it, the list scrolling, and a footer.
+- **Desktop:** a modal the size of a dialog that takes the place of the edit modal (or the
+  recording's Edit), which is hidden while it's open.
+- × or Escape (also from the search box) closes it and goes back to the dialog underneath as it
+  was, focus on the button that opened it. Android's back gesture does the same through the
+  dialog's close watcher. Choosing a setting closes it too; *Open existing* and *Merge into
+  existing* leave both for the other piece.
+- **Tune results** show the name, type, usual meter, the alias the search matched, "In library",
+  and, for tunes already loaded on this device, the settings count with their commonest keys,
+  the tunebook count and other names (from the cache, no extra requests).
+- **Settings** each show their number, key, meter, who posted them and when, and the opening bars
+  drawn as notation (abcjs, once scrolled into view; the ABC text until then). The current
+  setting is marked. The footer has *Skip* (keep the tune, no setting) or *Cancel*.
+- **Previews:** ▶ on every setting, and on every tune result (its first setting, fetched through
+  the cache on the first tap), plays it synthesized (§6.6) with this device's synth options at
+  the tune type's default tempo, adjustable with the speed control in the footer. ■ stops it.
+  One plays at a time; starting one pauses the main player, and closing the picker stops it.
 
 ### 6.4 Relations: Add / Split / Merge
 - **Add child:** the label depends on the parent's kind ("Add Set", "Add Tune", "Add Part"). It
@@ -710,7 +733,7 @@ M3 notes:
 - Integration cache: `integrations/cache.ts` (a tiny IndexedDB key-value store, `SwrCache`, and
   `throttledFetch`), `integrations/thesession-cache.ts` (TTLs and keys), and
   `store/thesession.svelte.ts` (shared reactive `Resource`s, the alias map, "Clear cached data").
-- UI: the 🔍 panel in the edit modal (`TheSessionSearch.svelte`), "Linked to … / Unlink" in the
+- UI: the 🔍 panel in the edit modal (`TheSessionSearch.svelte`, since replaced by the pickers of §6.3), "Linked to … / Unlink" in the
   edit modal, `TheSessionInfo.svelte` and a read-only Related section in the detail view, the
   duplicate banner in the list, and `MergeDialog.svelte`.
 - E2E (`e2e/thesession.test.ts`) serves the recorded fixtures through `page.route`
@@ -1354,6 +1377,31 @@ Post-M6 notes:
   work, which would also cover audio.
 - **e2e:** `mockTheSession` now routes on the browser context. Context routes still answer when
   the context is offline, so offline tests also abort thesession.org (and the samples) explicitly.
+
+**Decided for the thesession pickers (2026-10-23)**
+
+- **Views, not dropdowns:** the pickers (§6.3) are a `<dialog>` of their own, opened modally over
+  the edit modal or the recording's Edit, which gets `visibility: hidden` meanwhile (its backdrop
+  goes with it, so the picker has its own). The native top layer handles stacking, focus trapping
+  and Escape (only the top dialog closes); closing refocuses the opener explicitly, since the
+  browser's own focus restore runs while the dialog underneath is still hidden. One component
+  (`TheSessionPicker`) holds both steps, so ‹ can go back from the settings to the results.
+- **No history entry for the picker:** on Android, Chrome sends the back gesture to the open modal
+  dialog's close watcher, which closes it like Escape, so a `pushState` per picker would only add
+  a second, out-of-step way to close it. The edit modal works the same way.
+- **The flow is unchanged:** picking a tune still links it at once (title confirm, duplicate
+  offer), then the setting step; closing at the setting step is *Skip*. Picking another tune
+  after ‹ relinks, as before.
+- **Previews are their own player** (`audio/preview.svelte.ts`): a `SynthAdapter` on its own
+  `<audio>`, rendering through `synth.render`, so it shares the per-device options, the renderer
+  and the OPFS synth cache (a setting heard at 100% plays at once once chosen) but never touches
+  the library, the clips or the mini-player. It has its own speed (starting at 100%, kept while the
+  app is open, not persisted), since previews are for picking, not practice.
+- **Tune previews** play the tune's first setting: one `/tunes/{id}` request, cached, which the
+  setting step needs anyway. Search results carry no settings, so a tune that has never been
+  loaded shows only its type, meter and alias until then.
+- **Incipits** are the first two bars (`firstBars`, as for first notes) with the type's meter and
+  the setting's key, drawn by abcjs when the row scrolls into view.
 
 **Still open**
 

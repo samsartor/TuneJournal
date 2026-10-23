@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { tick } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { hasKey } from '#lib/domain/derived.ts';
@@ -11,7 +12,7 @@
 	import KeyInput from './KeyInput.svelte';
 	import SkillSlider from './SkillSlider.svelte';
 	import TagInput from './TagInput.svelte';
-	import TheSessionSearch from './TheSessionSearch.svelte';
+	import TheSessionPicker from './TheSessionPicker.svelte';
 	import { originName } from './origin.ts';
 	import { ui } from './state.svelte.ts';
 
@@ -29,7 +30,9 @@
 	let firstNotes = $state('');
 	let pending: PiecePatch = {};
 	let timer: ReturnType<typeof setTimeout> | undefined;
+	/** The thesession.org picker is open, covering this modal (§6.3). */
 	let searching = $state(false);
+	let searchButton = $state<HTMLButtonElement>();
 
 	const thesession = $derived(piece?.external?.thesession);
 	// A Part inherits skill and key from its Tune until it has its own (§5).
@@ -53,6 +56,13 @@
 			dialog.close();
 		}
 	});
+
+	/** Back from the picker: this modal shows again, with focus where it was. */
+	async function pickerClosed() {
+		searching = false;
+		await tick();
+		searchButton?.focus();
+	}
 
 	/** Leaves the modal for another piece (an existing copy of the tune just searched for). */
 	async function leaveTo(id: PieceId) {
@@ -95,7 +105,7 @@
 	}
 </script>
 
-<dialog bind:this={dialog} {onclose} aria-labelledby="edit-heading">
+<dialog bind:this={dialog} {onclose} class:covered={searching} aria-labelledby="edit-heading">
 	{#if editing && piece && index}
 		<div class="sheet">
 			<header>
@@ -136,28 +146,15 @@
 							class="btn-quiet search-btn"
 							aria-label="Search thesession.org"
 							title="Search thesession.org"
-							aria-expanded={searching}
+							aria-haspopup="dialog"
+							bind:this={searchButton}
 							onclick={() => {
 								flush();
-								searching = !searching;
+								searching = true;
 							}}>🔍</button
 						>
 					</div>
 				</div>
-
-				{#if searching}
-					{#key editing.id}
-						<TheSessionSearch
-							pieceId={editing.id}
-							initialQuery={title}
-							isNew={editing.isNew}
-							beforeApply={flush}
-							onapplied={syncText}
-							onclose={() => (searching = false)}
-							onleave={leaveTo}
-						/>
-					{/key}
-				{/if}
 
 				<div class="field">
 					<label for="edit-description">Description</label>
@@ -269,6 +266,20 @@
 	{/if}
 </dialog>
 
+{#if searching && editing}
+	{#key editing.id}
+		<TheSessionPicker
+			pieceId={editing.id}
+			initialQuery={title}
+			isNew={editing.isNew}
+			beforeApply={flush}
+			onapplied={syncText}
+			onclose={pickerClosed}
+			onleave={leaveTo}
+		/>
+	{/key}
+{/if}
+
 <style>
 	.inherit-note {
 		margin: 0;
@@ -294,6 +305,11 @@
 
 	dialog::backdrop {
 		background: rgb(0 0 0 / 0.4);
+	}
+
+	/* The thesession.org picker takes this modal's place while it's open. */
+	dialog.covered {
+		visibility: hidden;
 	}
 
 	.sheet {

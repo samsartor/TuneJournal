@@ -41,19 +41,24 @@ export async function mockTheSession(page: Page, overrides: Record<string, strin
 	return requests;
 }
 
+/** The thesession.org tune and setting picker, open over the edit modal or a recording's Edit. */
+export const picker = (page: Page) =>
+	page.getByRole('dialog', { name: /^(Find a tune on thesession\.org|Choose a setting)$/ });
+
 /** From the open edit modal: search thesession.org for `query` and wait for the results. */
 export async function searchTheSession(page: Page, query: string) {
 	const dialog = page.getByRole('dialog');
 	await dialog.getByLabel('Title').fill(query);
 	await dialog.getByRole('button', { name: 'Search thesession.org' }).click();
-	const results = dialog.getByRole('list', { name: 'thesession.org results' });
+	const results = picker(page).getByRole('list', { name: 'thesession.org results' });
 	await expect(results.getByRole('button').first()).toBeVisible();
 	return results;
 }
 
 /**
- * Adds a tune by searching thesession.org for "cooley" and picking the Cooley's reel, then its
- * first setting. Leaves the modal open. `title` is typed first, as the search text.
+ * Adds a tune by searching thesession.org for "cooley" and picking the Cooley's reel. `title` is
+ * typed first, as the search text. Returns the topmost dialog: the picker while it's open (the
+ * edit modal is hidden under it), then the edit modal, which is left open.
  */
 export async function addCooleys(page: Page, info: TestInfo, title = 'cooley') {
 	if (isMobile(info)) await page.getByRole('button', { name: 'Add tune' }).click();

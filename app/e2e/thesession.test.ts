@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { RELAY, backToList, card, cards, isMobile, open } from './helpers';
-import { addCooleys, mockTheSession, searchTheSession } from './thesession';
+import { addCooleys, mockTheSession, picker, searchTheSession } from './thesession';
 
 test.beforeEach(async ({ page }) => {
 	await page.routeWebSocket(RELAY, (ws) => ws.close());
@@ -16,10 +16,10 @@ test('search fills title, type tag, link, key and first notes from a setting', a
 	// "cooley" isn't "Cooley's", so it asks before replacing the title.
 	await expect(dialog.getByText("Replace the title “cooley” with “Cooley's”?")).toBeVisible();
 	await dialog.getByRole('button', { name: "Use “Cooley's”" }).click();
-	await expect(dialog.getByLabel('Title')).toHaveValue("Cooley's");
 
 	await expect(dialog.getByText("“Cooley's” has 3 settings.")).toBeVisible();
 	await dialog.getByRole('button', { name: /^Setting 2, E min:/ }).click();
+	await expect(dialog.getByLabel('Title')).toHaveValue("Cooley's");
 
 	// The setting's key and first notes go on the thesession recording; the tune inherits them.
 	await expect(dialog.getByLabel('Key as text')).toHaveValue('');
@@ -224,6 +224,7 @@ test('thesession data shows offline from the cache, and can be cleared', async (
 	await detail.getByRole('button', { name: 'Edit' }).click();
 	const results = await searchTheSession(page, "Cooley's");
 	await expect(results.getByRole('button', { name: /^Cooley's\s+Reel/ })).toBeVisible();
+	await picker(page).getByRole('button', { name: 'Close' }).click();
 	await page.getByRole('dialog').getByRole('button', { name: 'Done' }).click();
 	expect(offlineRequests).toEqual([]);
 	await context.setOffline(false);

@@ -3,7 +3,7 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import { RELAY, addTune, backToList, card, isMobile, open } from './helpers';
 import { YT_URL, mockMedia, wav } from './media';
-import { addCooleys, fixture, mockTheSession } from './thesession';
+import { addCooleys, fixture, mockTheSession, picker } from './thesession';
 
 test.beforeEach(async ({ page }) => {
 	await page.routeWebSocket(RELAY, (ws) => ws.close());
@@ -166,9 +166,12 @@ test('a thesession recording’s tune and setting can be changed, and the tune i
 
 	// Another setting: its key and first notes replace the old ones.
 	await edit.getByRole('button', { name: 'Change setting…' }).click();
-	const current = edit.getByRole('button', { name: /^Setting 2,/ });
+	const settings = picker(page);
+	await expect(settings).toHaveAccessibleName('Choose a setting');
+	const current = settings.getByRole('button', { name: /^Setting 2,/ });
 	await expect(current).toHaveAttribute('aria-current', 'true');
-	await edit.getByRole('button', { name: /^Setting 1, E dor:/ }).click();
+	await settings.getByRole('button', { name: /^Setting 1, E dor:/ }).click();
+	await expect(settings).toBeHidden();
 	await expect(edit.getByTestId('linked-tune')).toHaveText("Cooley's, setting 1");
 	await expect(edit.getByLabel('Key as text')).toHaveValue('E dorian');
 	await expect(edit.getByLabel('First notes (ABC)')).toHaveValue('D2 | EBBA B2 EB | B2 AB dBAG');
@@ -196,14 +199,15 @@ test('a thesession recording’s tune and setting can be changed, and the tune i
 	// Another tune altogether, through the same search as the edit modal's.
 	await (await clipMenu(page, 'thesession.org')).getByRole('menuitem', { name: 'Edit…' }).click();
 	await edit.getByRole('button', { name: 'Change tune…' }).click();
-	await edit
+	await picker(page)
 		.getByRole('list', { name: 'thesession.org results' })
 		.getByRole('button', { name: /^Seamus Cooley's/ })
 		.click();
-	await edit.getByRole('button', { name: 'Keep my title' }).click();
+	await picker(page).getByRole('button', { name: 'Keep my title' }).click();
 	// The fixtures have no settings for that tune.
-	await expect(edit.getByText(/couldn’t load its settings/)).toBeVisible();
-	await edit.getByRole('button', { name: 'Done' }).last().click();
+	await expect(picker(page).getByText(/couldn’t load its settings/)).toBeVisible();
+	await picker(page).getByRole('button', { name: 'Done' }).click();
+	await expect(picker(page)).toBeHidden();
 	await edit.getByRole('button', { name: 'Done' }).click();
 	await expect(
 		clip(page, 'thesession.org').getByRole('link', { name: /Open thesession\.org/ })

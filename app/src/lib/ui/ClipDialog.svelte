@@ -1,11 +1,12 @@
 <!--
 	Edit one recording (PLAN.md §5, §6.2): its title, the key and first notes as played in it (which
 	the piece inherits when it has none of its own), and what it points at. A thesession.org link can
-	be moved to another tune or setting (reusing the 🔍 search); other links can be corrected, which
+	be moved to another tune or setting (in the thesession.org picker, which covers this dialog); other links can be corrected, which
 	finds the provider again and refreshes the title preview. Playable recordings offer Trim.
 	Fields save when they change, like the edit modal.
 -->
 <script lang="ts">
+	import { tick } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { hasKey } from '#lib/domain/derived.ts';
@@ -24,7 +25,7 @@
 	import Notation from './Notation.svelte';
 	import ProviderIcon from './ProviderIcon.svelte';
 	import SynthOptions from './SynthOptions.svelte';
-	import TheSessionSearch from './TheSessionSearch.svelte';
+	import TheSessionPicker from './TheSessionPicker.svelte';
 	import { sourceFromLink } from './recordings.ts';
 
 	let {
@@ -87,7 +88,10 @@
 	let url = $state(source?.url ?? '');
 	let urlError = $state('');
 	let urlStatus = $state('');
+	/** The thesession.org picker is open, covering this dialog. */
 	let searching = $state<'tune' | 'setting'>();
+	let tuneButton = $state<HTMLButtonElement>();
+	let settingButton = $state<HTMLButtonElement>();
 
 	$effect(() => {
 		dialog.showModal();
@@ -162,13 +166,27 @@
 		onclose();
 	}
 
+	/** Back from the picker: this dialog shows again, with focus on the button that opened it. */
+	async function pickerClosed() {
+		const opener = searching === 'setting' ? settingButton : tuneButton;
+		searching = undefined;
+		await tick();
+		opener?.focus();
+	}
+
 	async function leaveTo(id: PieceId) {
+		searching = undefined;
 		dialog.close();
 		await goto(resolve('/(main)/piece/[id]', { id }));
 	}
 </script>
 
-<dialog bind:this={dialog} onclose={close} aria-labelledby="{uid}-heading">
+<dialog
+	bind:this={dialog}
+	onclose={close}
+	class:covered={searching}
+	aria-labelledby="{uid}-heading"
+>
 	{#if piece && clip && source}
 		<div class="sheet">
 			<header>
@@ -195,31 +213,28 @@
 								? `, setting ${thesession.settingId}`
 								: ''}
 					</p>
-					{#if searching}
-						{#key searching}
-							<TheSessionSearch
-								{pieceId}
-								initialQuery={piece.title ?? ''}
-								isNew={false}
-								settingsOf={searching === 'setting'
-									? { tuneId: tuneLink, name: tuneName }
-									: undefined}
-								beforeApply={flushText}
-								onapplied={sync}
-								onclose={() => (searching = undefined)}
-								onleave={leaveTo}
-							/>
-						{/key}
-					{:else}
-						<div class="buttons">
-							<button type="button" class="btn-quiet" onclick={() => (searching = 'tune')}
-								>Change tune…</button
-							>
-							<button type="button" class="btn-quiet" onclick={() => (searching = 'setting')}
-								>Change setting…</button
-							>
-						</div>
-					{/if}
+					<div class="buttons">
+						<button
+							type="button"
+							class="btn-quiet"
+							aria-haspopup="dialog"
+							bind:this={tuneButton}
+							onclick={() => {
+								flushText();
+								searching = 'tune';
+							}}>Change tune…</button
+						>
+						<button
+							type="button"
+							class="btn-quiet"
+							aria-haspopup="dialog"
+							bind:this={settingButton}
+							onclick={() => {
+								flushText();
+								searching = 'setting';
+							}}>Change setting…</button
+						>
+					</div>
 				</div>
 				{#if synthOf}
 					<div class="field" role="group" aria-labelledby="{uid}-synth">
@@ -323,6 +338,23 @@
 	{/if}
 </dialog>
 
+{#if searching && piece}
+	{#key searching}
+		<TheSessionPicker
+			{pieceId}
+			initialQuery={piece.title ?? ''}
+			isNew={false}
+			settingsOf={searching === 'setting' && tuneLink !== undefined
+				? { tuneId: tuneLink, name: tuneName }
+				: undefined}
+			beforeApply={flushText}
+			onapplied={sync}
+			onclose={pickerClosed}
+			onleave={leaveTo}
+		/>
+	{/key}
+{/if}
+
 <style>
 	dialog {
 		width: min(32rem, calc(100% - 2 * var(--space-3)));
@@ -337,6 +369,11 @@
 
 	dialog::backdrop {
 		background: rgb(0 0 0 / 0.4);
+	}
+
+	/* The thesession.org picker takes this dialog's place while it's open. */
+	dialog.covered {
+		visibility: hidden;
 	}
 
 	.sheet {
