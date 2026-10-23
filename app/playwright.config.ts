@@ -1,5 +1,6 @@
 import { existsSync } from 'node:fs';
 import { defineConfig } from '@playwright/test';
+import { PORT, SYNC_PORT } from './e2e/ports';
 
 // Use Playwright's own Chromium when it's installed, else the system one.
 const SYSTEM_CHROMIUM = '/usr/sbin/chromium';
@@ -7,9 +8,8 @@ const executablePath =
 	process.env.PLAYWRIGHT_CHROMIUM_PATH ??
 	(existsSync(SYSTEM_CHROMIUM) ? SYSTEM_CHROMIUM : undefined);
 
-const PORT = 4173;
-// A local sync relay (e2e/sync-server.ts), so tests never touch the public one.
-const SYNC_PORT = 3031;
+// A local sync relay (e2e/sync-server.ts), so tests never touch the public one. Both ports can be
+// moved with E2E_PORT and E2E_SYNC_PORT (e2e/ports.ts).
 const SYNC_URL = `ws://localhost:${SYNC_PORT}`;
 
 export default defineConfig({

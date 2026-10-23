@@ -158,7 +158,8 @@ test('choose a tune, preview its settings, then choose one', async ({ page }, in
 	await expect(second).toHaveAttribute('data-state', 'playing', { timeout: 20_000 });
 	await expect.poll(() => sounding(page)).toBe(1);
 
-	// The preview speed re-renders at that tempo.
+	// The preview speed re-renders at that tempo. On a phone it's folded behind its value.
+	if (isMobile(info)) await settings.getByRole('button', { name: 'Preview speed 100%' }).click();
 	const speed = settings.getByRole('group', { name: 'Preview speed' });
 	await speed.getByRole('button', { name: '75% speed' }).click();
 	await expect(speed.getByRole('button', { name: '75% speed' })).toHaveAttribute(
@@ -205,6 +206,20 @@ test('a tune can be previewed from the results, and closing the picker stops it'
 	await expect(play).toHaveAttribute('data-state', 'playing', { timeout: 20_000 });
 	await expect.poll(() => sounding(page)).toBe(1);
 
+	// The preview bar shows it too, and pauses and seeks it.
+	const bar = picker(page).getByTestId('preview-bar');
+	await expect(bar).toContainText("Cooley's");
+	await bar.getByRole('button', { name: 'Pause preview' }).click();
+	await expect(play).toHaveAttribute('data-state', 'paused');
+	await expect.poll(() => sounding(page)).toBe(0);
+	await bar.getByRole('slider', { name: 'Preview position' }).fill('30');
+	await expect(bar).toHaveAttribute('data-time', /^(29\.9|30\.)/);
+	await expectNoSideScroll(page, picker(page));
+	// ▶ on the row carries on from there.
+	await play.click();
+	await expect(play).toHaveAttribute('data-state', 'playing');
+	await expect.poll(async () => Number(await bar.getAttribute('data-time'))).toBeGreaterThan(30);
+
 	// A tune without settings says so on its own row.
 	const seamus = results.getByRole('button', { name: "Preview Seamus Cooley's" });
 	await seamus.click();
@@ -219,6 +234,99 @@ test('a tune can be previewed from the results, and closing the picker stops it'
 	await expect(picker(page)).toBeHidden();
 	await expect.poll(() => sounding(page)).toBe(0);
 	await expect(page.getByRole('dialog', { name: 'New tune' })).toBeVisible();
+});
+
+test('the preview bar seeks a setting, and its notation follows the bars playing', async ({
+	page
+}, info) => {
+	test.setTimeout(90_000);
+	await addCooleys(page, info, "Cooley's");
+	const settings = picker(page);
+	const rows = settings.getByRole('list').getByRole('listitem');
+	const incipit = rows.nth(0).getByTestId('incipit');
+	await expect(incipit).toHaveAttribute('data-drawn', 'true', { timeout: 15_000 });
+	await expect(incipit).toHaveAttribute('data-following', 'false');
+	const height = (await incipit.boundingBox())!.height;
+	const bar = settings.getByTestId('preview-bar');
+	await expect(bar).toBeHidden();
+
+	// Playing: the bar shows, and the notation shows the bars playing, from the pickup and first two.
+	const first = settings.getByRole('button', { name: 'Preview setting 1' });
+	await first.click();
+	await expect(first).toHaveAttribute('data-state', 'playing', { timeout: 20_000 });
+	await expect(bar).toBeVisible();
+	await expect(bar).toContainText('Setting 1');
+	await expect(incipit).toHaveAttribute('data-following', 'true');
+	await expect(incipit).toHaveAttribute('data-measures', '1,2,3');
+	await expect(incipit.locator('.abcjs-current').first()).toBeAttached();
+	await expectNoSideScroll(page, settings);
+	await shot(page, info, 'preview-bar');
+	// It moves on as it plays (a reel's two bars take 2.4 s at 100%).
+	await expect(incipit).toHaveAttribute('data-measures', '4,5', { timeout: 10_000 });
+
+	// Paused, a seek moves the notation at once: 20 s in is the B part's first time through.
+	await bar.getByRole('button', { name: 'Pause preview' }).click();
+	await expect(bar).toHaveAttribute('data-playing', 'false');
+	await expect(first).toHaveAttribute('data-state', 'paused');
+	const position = bar.getByRole('slider', { name: 'Preview position' });
+	await position.fill('20');
+	await expect(bar).toHaveAttribute('data-time', '20.00');
+	await expect(incipit).toHaveAttribute('data-window', '8');
+	await expect(incipit).toHaveAttribute('data-measures', '12,13');
+	await expect(incipit.locator('.abcjs-current').first()).toBeAttached();
+	// The keyboard seeks too.
+	await position.focus();
+	await page.keyboard.press('End');
+	await expect.poll(async () => Number(await bar.getAttribute('data-time'))).toBeGreaterThan(70);
+	await expect(incipit).not.toHaveAttribute('data-measures', '12,13');
+	await position.fill('20');
+	await expect(incipit).toHaveAttribute('data-measures', '12,13');
+	// The row keeps its height whatever bars it shows.
+	expect(Math.abs((await incipit.boundingBox())!.height - height)).toBeLessThan(1);
+
+	// At another speed the place in the tune holds, and seeking still maps to the same bars.
+	if (isMobile(info)) await settings.getByRole('button', { name: 'Preview speed 100%' }).click();
+	await settings
+		.getByRole('group', { name: 'Preview speed' })
+		.getByRole('button', { name: '50% speed' })
+		.click();
+	await bar.getByRole('button', { name: 'Play preview' }).click();
+	await expect(bar).toHaveAttribute('data-playing', 'true');
+	await page.waitForTimeout(1000);
+	await expect(incipit).toHaveAttribute('data-measures', '12,13');
+	await bar.getByRole('button', { name: 'Pause preview' }).click();
+	await position.fill('32');
+	await expect(incipit).toHaveAttribute('data-measures', '14,15');
+	await expectNoSideScroll(page, settings);
+	await shot(page, info, 'preview-bar-seeked');
+
+	// Stopping goes back to the opening bars.
+	await bar.getByRole('button', { name: 'Stop preview' }).click();
+	await expect(bar).toBeHidden();
+	await expect(first).toHaveAttribute('data-state', 'idle');
+	await expect(incipit).toHaveAttribute('data-following', 'false');
+	await expect(incipit.locator('.score')).toBeVisible();
+
+	// So does leaving the settings while it plays: back to the results, then the same tune again.
+	await first.click();
+	await expect(incipit).toHaveAttribute('data-following', 'true', { timeout: 20_000 });
+	await settings.getByRole('button', { name: 'Back to search results' }).click();
+	await expect.poll(() => sounding(page)).toBe(0);
+	await settings
+		.getByRole('list', { name: 'thesession.org results' })
+		.getByRole('button', { name: /^Cooley's\s+Reel/ })
+		.click();
+	await expect(settings).toHaveAccessibleName('Choose a setting');
+	await expect(incipit).toHaveAttribute('data-drawn', 'true', { timeout: 15_000 });
+	await expect(incipit).toHaveAttribute('data-following', 'false');
+	await expect(bar).toBeHidden();
+
+	// And closing the picker stops it.
+	await first.click();
+	await expect(incipit).toHaveAttribute('data-following', 'true', { timeout: 20_000 });
+	await settings.getByRole('button', { name: 'Close' }).click();
+	await expect(settings).toBeHidden();
+	await expect.poll(() => sounding(page)).toBe(0);
 });
 
 test('the recording’s Edit dialog changes the setting and the tune in the pickers', async ({

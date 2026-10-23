@@ -1,9 +1,10 @@
 import { expect, type Browser, type Page, type TestInfo } from '@playwright/test';
+import { SYNC_PORT } from './ports';
 
 export const isMobile = (info: TestInfo) => info.project.name === 'mobile';
 
 /** The local relay from e2e/sync-server.ts, which the e2e build syncs through. */
-export const RELAY = /localhost:3031/;
+export const RELAY = new RegExp(`localhost:${SYNC_PORT}`);
 
 /**
  * Opens the app. The e2e build syncs through the local relay; the public one is blocked as well,

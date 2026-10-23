@@ -5,7 +5,7 @@
 <script lang="ts">
 	import { onDestroy } from 'svelte';
 	import { resolve } from '$app/paths';
-	import { formatRate, formatTime } from '#lib/audio/bounds.ts';
+	import { formatRate } from '#lib/audio/bounds.ts';
 	import { player } from '#lib/audio/player.svelte.ts';
 	import { untitled } from '#lib/domain/format.ts';
 	import { formatKey } from '#lib/domain/key.ts';
@@ -13,6 +13,7 @@
 	import { library } from '#lib/store/library.svelte.ts';
 	import { oembed } from '#lib/store/oembed.svelte.ts';
 	import ProviderIcon from './ProviderIcon.svelte';
+	import Scrubber from './Scrubber.svelte';
 	import SpeedControl from './SpeedControl.svelte';
 
 	let bar = $state<HTMLElement>();
@@ -109,21 +110,13 @@
 				{#if player.error}
 					<p class="error" role="alert">{player.error}</p>
 				{:else}
-					<div class="scrub">
-						<span class="time">{formatTime(player.time)}</span>
-						<input
-							type="range"
-							aria-label="Position"
-							aria-valuetext="{formatTime(player.time)} of {formatTime(end)}"
-							min={bounds.start}
-							max={end}
-							step="0.1"
-							value={Math.min(Math.max(player.time, bounds.start), end)}
-							disabled={player.loading}
-							oninput={(e) => player.seek(Number(e.currentTarget.value))}
-						/>
-						<span class="time">{formatTime(end)}</span>
-					</div>
+					<Scrubber
+						time={player.time}
+						start={bounds.start}
+						{end}
+						disabled={player.loading}
+						onseek={(t) => player.seek(t)}
+					/>
 				{/if}
 			</div>
 
@@ -265,24 +258,6 @@
 		white-space: nowrap;
 		color: var(--color-muted);
 		text-decoration: none;
-	}
-
-	.scrub {
-		display: flex;
-		align-items: center;
-		gap: var(--space-1);
-	}
-
-	.scrub input {
-		flex: 1;
-		min-width: 0;
-		min-height: 2rem;
-	}
-
-	.time {
-		font-size: 0.75rem;
-		color: var(--color-muted);
-		font-variant-numeric: tabular-nums;
 	}
 
 	.error {

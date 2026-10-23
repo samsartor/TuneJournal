@@ -8,9 +8,11 @@
 	in the library, it offers to open or merge into it instead. With `settingsOf` it skips the
 	search and just picks another setting of the linked tune. Tunes and settings can be previewed,
 	synthesized, before choosing (audio/preview.svelte.ts); a preview stops when the picker closes.
+	The footer's preview bar pauses and seeks the one loaded, and a setting's notation follows it.
 -->
 <script lang="ts">
 	import { onDestroy, onMount, tick } from 'svelte';
+	import { formatRate } from '#lib/audio/bounds.ts';
 	import { preview } from '#lib/audio/preview.svelte.ts';
 	import { foldText } from '#lib/domain/derived.ts';
 	import { softDelete } from '#lib/domain/ops.ts';
@@ -33,6 +35,7 @@
 	import { library } from '#lib/store/library.svelte.ts';
 	import { loadErrorMessage, theSession } from '#lib/store/thesession.svelte.ts';
 	import Incipit from './Incipit.svelte';
+	import Scrubber from './Scrubber.svelte';
 	import SpeedControl from './SpeedControl.svelte';
 	import {
 		incipitAbc,
@@ -90,6 +93,8 @@
 	let step = $state.raw<Step>({ kind: 'results' });
 	/** Set when closing to show another piece rather than going back. */
 	let leaveTo: PieceId | undefined;
+	/** The speed control, folded behind its value on a phone. */
+	let speedOpen = $state(false);
 
 	let timer: ReturnType<typeof setTimeout> | undefined;
 	let latest = 0;
@@ -286,16 +291,21 @@
 	}
 </script>
 
-{#snippet previewButton(key: string, label: string, target: () => Promise<SynthTarget>)}
+{#snippet previewButton(
+	key: string,
+	label: string,
+	title: string,
+	target: () => Promise<SynthTarget>
+)}
 	{@const state = preview.state(key)}
 	<button
 		type="button"
 		class="btn-quiet play"
 		aria-label={label}
 		title={label}
-		aria-pressed={state !== 'idle'}
+		aria-pressed={state === 'playing' || state === 'loading'}
 		data-state={state}
-		onclick={() => preview.toggle(key, target)}
+		onclick={() => preview.toggle(key, target, title)}
 	>
 		{#if state === 'loading'}<span class="spinner" aria-hidden="true"
 			></span>{:else if state === 'playing'}■{:else}▶{/if}
@@ -396,7 +406,7 @@
 										{/if}
 									{/if}
 								</button>
-								{@render previewButton(`tune:${hit.id}`, `Preview ${hit.name}`, () =>
+								{@render previewButton(`tune:${hit.id}`, `Preview ${hit.name}`, hit.name, () =>
 									firstSetting(hit.id)
 								)}
 								{@render previewError(`tune:${hit.id}`)}
@@ -451,6 +461,7 @@
 							{@const key = settingKeyLabel(setting.key)}
 							{@const notes = firstBars(setting.abc, 2)}
 							{@const by = postedBy(setting)}
+							{@const playingHere = preview.key === `setting:${setting.id}`}
 							<li class="row" class:current={setting.id === currentSetting}>
 								<button
 									type="button"
@@ -466,10 +477,20 @@
 										{#if setting.id === currentSetting}<span class="chip">Current</span>{/if}
 									</span>
 									{#if by}<span class="muted small">{by}</span>{/if}
-									<Incipit abc={incipitAbc(setting, tune.type)} text={notes} />
+									<Incipit
+										abc={incipitAbc(setting, tune.type)}
+										text={notes}
+										score={playingHere ? preview.score : undefined}
+										time={playingHere ? preview.time : 0}
+										playing={playingHere && preview.playing}
+										clock={() => preview.position()}
+									/>
 								</button>
-								{@render previewButton(`setting:${setting.id}`, `Preview setting ${i + 1}`, () =>
-									Promise.resolve({ tuneId: tune.id, settingId: setting.id })
+								{@render previewButton(
+									`setting:${setting.id}`,
+									`Preview setting ${i + 1}`,
+									`Setting ${i + 1}`,
+									() => Promise.resolve({ tuneId: tune.id, settingId: setting.id })
 								)}
 								{@render previewError(`setting:${setting.id}`)}
 							</li>
@@ -479,23 +500,75 @@
 			{/if}
 		</div>
 
-		{#if speed || done}
+		{#if speed || done || preview.key}
 			<footer>
-				{#if speed}
-					<SpeedControl
-						rate={preview.rate}
-						onchange={(r) => preview.setRate(r)}
-						label="Preview speed"
-					/>
-				{/if}
-				{#if done}
-					<button type="button" class="btn-quiet end" onclick={close}
-						>{step.kind === 'settings' && step.error
-							? 'Done'
-							: settingsOf
-								? 'Cancel'
-								: 'Skip'}</button
+				{#if preview.key}
+					<div
+						class="transport"
+						role="group"
+						aria-label="Preview player"
+						data-testid="preview-bar"
+						data-time={preview.time.toFixed(2)}
+						data-playing={preview.playing}
 					>
+						<button
+							type="button"
+							class="toggle"
+							aria-label={preview.playing ? 'Pause preview' : 'Play preview'}
+							disabled={preview.loading}
+							onclick={() => preview.togglePause()}
+						>
+							{#if preview.loading}<span class="spinner" aria-hidden="true"
+								></span>{:else if preview.playing}❚❚{:else}▶{/if}
+						</button>
+						<div class="now">
+							<span class="now-title">{preview.title}</span>
+							<Scrubber
+								time={preview.time}
+								end={preview.duration}
+								label="Preview position"
+								disabled={preview.loading || !preview.duration}
+								onseek={(t) => preview.seek(t)}
+							/>
+						</div>
+						<button
+							type="button"
+							class="icon-btn"
+							aria-label="Stop preview"
+							title="Stop preview"
+							onclick={() => preview.stop()}>■</button
+						>
+					</div>
+				{/if}
+				{#if speed || done}
+					<div class="controls">
+						{#if speed}
+							<button
+								type="button"
+								class="btn-quiet rate"
+								aria-label="Preview speed {formatRate(preview.rate)}"
+								aria-expanded={speedOpen}
+								aria-controls="{uid}-speed"
+								onclick={() => (speedOpen = !speedOpen)}>Speed {formatRate(preview.rate)}</button
+							>
+							<div class="speed-panel" class:open={speedOpen} id="{uid}-speed">
+								<SpeedControl
+									rate={preview.rate}
+									onchange={(r) => preview.setRate(r)}
+									label="Preview speed"
+								/>
+							</div>
+						{/if}
+						{#if done}
+							<button type="button" class="btn-quiet end" onclick={close}
+								>{step.kind === 'settings' && step.error
+									? 'Done'
+									: settingsOf
+										? 'Cancel'
+										: 'Skip'}</button
+							>
+						{/if}
+					</div>
 				{/if}
 			</footer>
 		{/if}
@@ -572,13 +645,65 @@
 	}
 
 	footer {
+		display: grid;
+		gap: var(--space-1);
+		padding: var(--space-2) var(--space-3);
+		padding-bottom: calc(var(--space-2) + env(safe-area-inset-bottom));
+		border-top: 1px solid var(--color-border);
+	}
+
+	/* The preview bar: play/pause, what's playing over its seek bar, stop. */
+	.transport {
+		display: flex;
+		align-items: center;
+		gap: var(--space-2);
+		min-width: 0;
+	}
+
+	.toggle {
+		flex: none;
+		width: var(--touch);
+		height: var(--touch);
+		padding: 0;
+		border-radius: 50%;
+		font-size: 1rem;
+	}
+
+	.now {
+		flex: 1;
+		min-width: 0;
+		display: grid;
+	}
+
+	.now-title {
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		font-size: 0.875rem;
+		font-weight: 600;
+	}
+
+	/* Speed (folded behind its value on a phone) and Skip/Cancel. */
+	.controls {
 		display: flex;
 		flex-wrap: wrap;
 		align-items: center;
 		gap: var(--space-2);
-		padding: var(--space-2) var(--space-3);
-		padding-bottom: calc(var(--space-2) + env(safe-area-inset-bottom));
-		border-top: 1px solid var(--color-border);
+	}
+
+	.rate {
+		padding: 0 var(--space-2);
+		font-variant-numeric: tabular-nums;
+	}
+
+	.speed-panel {
+		display: none;
+		order: 3;
+		flex-basis: 100%;
+	}
+
+	.speed-panel.open {
+		display: block;
 	}
 
 	.end {
@@ -728,6 +853,17 @@
 
 		header {
 			padding-right: var(--space-2);
+		}
+
+		/* Room for the speed control inline. */
+		.rate {
+			display: none;
+		}
+
+		.speed-panel {
+			display: block;
+			order: 0;
+			flex-basis: auto;
 		}
 	}
 </style>

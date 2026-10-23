@@ -366,8 +366,18 @@ than in a panel inside the dialog:
   setting is marked. The footer has *Skip* (keep the tune, no setting) or *Cancel*.
 - **Previews:** ▶ on every setting, and on every tune result (its first setting, fetched through
   the cache on the first tap), plays it synthesized (§6.6) with this device's synth options at
-  the tune type's default tempo, adjustable with the speed control in the footer. ■ stops it.
-  One plays at a time; starting one pauses the main player, and closing the picker stops it.
+  the tune type's default tempo. ■ on the row stops it; ▶ on a paused one carries on. One plays at
+  a time; starting one pauses the main player, and closing the picker (or ‹ back) stops it.
+- **Preview bar:** while a preview is loaded (playing or paused), the footer shows it above the
+  speed and Skip/Cancel: play/pause, its name ("Setting 2", or the tune's) over a seek bar with
+  the elapsed and total time (the player bar's scrubber: drag, tap or arrow keys), and ■ to stop.
+  Times are the tune's at 100%, as in the player bar, so a place holds across speed changes. The
+  speed control is folded behind a "Speed 100%" toggle on a phone, inline on a desktop.
+- **Notation follows:** while a setting plays or is paused, its row's incipit shows the bars
+  being played instead of the opening ones, about two at a time (a pickup with the bars after it),
+  with the note sounding highlighted. It follows the repeats, endings and times through as heard,
+  moves on at once after a seek, and keeps the row's height. Stopped, the opening bars come back.
+  Tune results have no notation, so their previews only get the bar.
 
 ### 6.4 Relations: Add / Split / Merge
 - **Add child:** the label depends on the parent's kind ("Add Set", "Add Tune", "Add Part"). It
@@ -1402,6 +1412,23 @@ Post-M6 notes:
   loaded shows only its type, meter and alias until then.
 - **Incipits** are the first two bars (`firstBars`, as for first notes) with the type's meter and
   the setting's key, drawn by abcjs when the row scrolls into view.
+- **Following notation (2026-10-23):** re-render a small slice at window changes rather than
+  clip a moving window over the whole tune: abcjs lays a full tune out in wrapped lines at its own
+  widths, so a clipped window would jump between lines and scales. The map (`ui/follow.ts`) comes
+  from `setUpAudio` on the very ABC the synth renders (times through included): each note has its
+  start (whole notes × the 100% tempo = tune seconds, so speed changes need nothing) and its
+  `startChar`, which places it between two of the parsed bar lines. Measures in played order are
+  grouped greedily into windows of ≥1.9 bars by duration, so a pickup rides with the two bars
+  after it and a short last bar takes the pickup back. A window's ABC is the header's `M/L/K` plus
+  its measures' text with their bar lines (an opener restated after a jump, `:|2` → `|2`; ending
+  numbers dropped from a closer). It's drawn (abcjs, ~ms) only when the window changes, over the
+  static incipit, which stays in place invisible to hold the row's height; the window's SVG is
+  fitted into that box. The note highlight reads the audio's time every frame while playing and
+  finds the note's element through the slice's own `setTiming`.
+- **Preview bar in the footer**, not on the row: it stays put while the list scrolls, works the
+  same for tune results (no notation), and the row only changes its notation. The scrubber is a
+  shared `Scrubber` component (player bar, Shuffle, previews). e2e ports can be moved with
+  `E2E_PORT` / `E2E_SYNC_PORT` (`e2e/ports.ts`) to run two suites side by side.
 
 **Still open**
 

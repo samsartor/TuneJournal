@@ -12,6 +12,7 @@ import {
 	open,
 	syncStatus
 } from './helpers';
+import { SYNC_PORT } from './ports';
 
 /** Opens the deep link on `page` (a scan on another device) and links it, without merging. */
 async function join(page: Page, link: string, { merge = false } = {}) {
@@ -186,7 +187,9 @@ test.describe('sync status', () => {
 
 		await page.getByRole('link', { name: 'Settings' }).click();
 		await expect(page.getByTestId('sync-detail')).toHaveText(
-			/^Connected to the sync server \(localhost:3031\)\. Last synced just now\.$/
+			new RegExp(
+				`^Connected to the sync server \\(localhost:${SYNC_PORT}\\)\\. Last synced just now\\.$`
+			)
 		);
 	});
 
