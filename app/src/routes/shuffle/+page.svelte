@@ -1,70 +1,109 @@
 <!--
-	Shuffle (PLAN.md §6.5): full-screen flashcards on every width. One piece at a time, picked by
-	the temperature-weighted sampler in domain/shuffle.ts, with its own player. "Practiced" logs
-	practice and moves on; "Skip" moves on without logging anything. The skill slider saves as you
-	move it (an explicit edit), and a practice entry records it as `skillAfter` when it changed.
-	Pieces shown this session aren't picked again until Restart.
+	Shuffle (PLAN.md §6.5): full-screen flashcards on every width. One piece at a time, in the
+	session's order from domain/shuffle.ts (Gumbel-top-k, seeded). The session lives in the URL,
+	/shuffle?seed=…&at=…&i=…, kept up to date with replaceState, so a reload or a trip to a piece's
+	details and back lands on the same card, and Back leaves Shuffle. "Practiced" logs practice and
+	moves on; "Skip" moves on without logging anything. The skill slider saves as you move it (an
+	explicit edit), and a practice entry records it as `skillAfter` when it changed.
 -->
 <script lang="ts">
 	import { onDestroy, untrack } from 'svelte';
+	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
+	import { page } from '$app/state';
 	import { player } from '#lib/audio/player.svelte.ts';
 	import { hasKey } from '#lib/domain/derived.ts';
 	import { relativeTime, untitled } from '#lib/domain/format.ts';
 	import { formatKey } from '#lib/domain/key.ts';
 	import { logPractice, updatePiece } from '#lib/domain/ops.ts';
-	import { pickNext, shuffleCandidates } from '#lib/domain/shuffle.ts';
+	import {
+		newSeed,
+		parseSession,
+		sessionOrder,
+		sessionQuery,
+		shuffleCandidates,
+		shuffleFingerprint,
+		type ShuffleSession
+	} from '#lib/domain/shuffle.ts';
 	import type { PieceId, Skill } from '#lib/domain/types.ts';
 	import { library } from '#lib/store/library.svelte.ts';
 	import KindBadge from '#lib/ui/KindBadge.svelte';
 	import ShufflePlayer from '#lib/ui/ShufflePlayer.svelte';
 	import ShuffleSettings from '#lib/ui/ShuffleSettings.svelte';
 	import SkillSlider from '#lib/ui/SkillSlider.svelte';
+	import { loadSnapshot, saveSnapshot, type ShuffleSnapshot } from '#lib/ui/shuffleSession.ts';
 	import { ui } from '#lib/ui/state.svelte.ts';
 
 	const index = $derived(library.index);
 	const settings = $derived(library.doc?.settings.shuffle);
 	const list = $derived(library.doc?.settings.list);
+	const fingerprint = $derived(settings ? shuffleFingerprint(settings, list) : undefined);
 
-	/** Pieces shown this session, in order. Lives only as long as the view (§6.5). */
-	let shown = $state<PieceId[]>([]);
-	let currentId = $state<PieceId>();
-	/** The piece's own skill when its card came up, to tell whether the slider moved. */
-	let skillAtStart: Skill | undefined;
-	let started = $state(false);
+	function freshSession(): ShuffleSession {
+		return { seed: newSeed(), at: Date.now(), i: 0 };
+	}
+
+	/** Seed, start and position, from the URL on entry (a new session when they're missing). */
+	let session = $state<ShuffleSession>(
+		untrack(() => parseSession(page.url.searchParams)) ?? freshSession()
+	);
+	/** The session's order, built once and then kept as is (see shuffleSession.ts). */
+	let snapshot = $state.raw<ShuffleSnapshot>();
 	let settingsOpen = $state(false);
 	let playerUi = $state<ShufflePlayer>();
 
-	const piece = $derived(currentId ? index?.get(currentId) : undefined);
-	// Everything that matches the settings, shown or not: for the live count and the empty states.
-	const matching = $derived(
-		index && settings ? shuffleCandidates(index, settings, { list, now: ui.now }) : []
-	);
-	// Not shown yet, and not the card that's up now.
-	const remaining = $derived(
-		matching.filter((c) => c.piece.id !== currentId && !shown.includes(c.piece.id)).length
-	);
+	const href = $derived(`${resolve('/shuffle')}?${sessionQuery(session)}`);
 
-	function next() {
-		if (!index || !settings) return;
-		const now = Date.now();
-		const candidates = shuffleCandidates(index, settings, { shown: new Set(shown), list, now });
-		const picked = pickNext(candidates, settings, Math.random, now)?.piece;
-		currentId = picked?.id;
-		skillAtStart = picked?.skill;
-	}
-
-	// Deal the first card once the library is open.
+	// Keep the URL in step without adding history entries, so Back leaves Shuffle.
 	$effect(() => {
-		if (!started && index && settings) {
-			started = true;
-			untrack(next);
-		}
+		const target = href;
+		if (location.pathname + location.search === target) return;
+		// eslint-disable-next-line svelte/no-navigation-without-resolve -- resolve('/shuffle') plus a query
+		void goto(target, { replace: true, shallow: true, reset: false });
 	});
 
-	// With no card up, deal as soon as something unshown matches (after a settings change, say).
+	// Build the order once the library is open; settings changed mid-session start a new shuffle.
 	$effect(() => {
-		if (started && !currentId && remaining > 0) untrack(next);
+		if (!index || !settings || fingerprint === undefined) return;
+		const fp = fingerprint;
+		untrack(() => {
+			if (snapshot?.fingerprint === fp) return;
+			if (snapshot) reshuffle();
+			else build(loadSnapshot(session.seed, session.at, fp));
+		});
+	});
+
+	function build(saved?: ShuffleSnapshot) {
+		if (!index || !settings || fingerprint === undefined) return;
+		const { seed, at } = session;
+		snapshot = saved ?? {
+			seed,
+			at,
+			fingerprint,
+			ids: sessionOrder(index, settings, { seed, at, list })
+		};
+		saveSnapshot(snapshot);
+	}
+
+	function reshuffle() {
+		player.close();
+		session = freshSession();
+		build();
+	}
+
+	const order = $derived(snapshot?.ids);
+	const currentId = $derived<PieceId | undefined>(order?.[session.i]);
+	const piece = $derived(currentId ? index?.get(currentId) : undefined);
+	// Everything that matches the settings now: for the live count and the empty states.
+	const matching = $derived(
+		index && settings ? shuffleCandidates(index, settings, { list, at: ui.now }) : []
+	);
+	// Not counting the card that's up.
+	const remaining = $derived(order ? Math.max(0, order.length - session.i - 1) : 0);
+
+	// An empty session, but something matches now (synced in after it started, say): start over.
+	$effect(() => {
+		if (order?.length === 0 && matching.length > 0) untrack(reshuffle);
 	});
 
 	// The piece was deleted or merged away (on another device, say): move on.
@@ -72,17 +111,28 @@
 		if (currentId && index && (!piece || piece.deletedAt || piece.mergedInto)) untrack(advance);
 	});
 
+	// Remember the piece's own skill when its card comes up, to tell whether the slider moved.
+	$effect(() => {
+		const id = currentId;
+		const skill = piece?.skill;
+		untrack(() => {
+			if (!id || !snapshot || snapshot.card?.id === id) return;
+			snapshot = { ...snapshot, card: skill === undefined ? { id } : { id, skill } };
+			saveSnapshot(snapshot);
+		});
+	});
+
 	function advance() {
 		player.close();
-		if (currentId) shown = [...shown, currentId];
-		next();
+		session = { ...session, i: session.i + 1 };
 	}
 
 	function practiced() {
 		const p = piece;
 		if (!p) return;
 		const skill = p.skill;
-		const changed = skill !== skillAtStart && skill !== undefined;
+		const atStart = snapshot?.card?.id === p.id ? snapshot.card.skill : skill;
+		const changed = skill !== atStart && skill !== undefined;
 		library.change((d) =>
 			logPractice(d, p.id, { via: 'shuffle', ...(changed ? { skillAfter: skill } : {}) })
 		);
@@ -90,15 +140,13 @@
 		advance();
 	}
 
-	function restart() {
-		player.close();
-		shown = [];
-		next();
-	}
-
 	function setSkill(skill: Skill | null) {
 		const id = currentId;
 		if (id) library.change((d) => updatePiece(d, id, { skill }));
+	}
+
+	function openDetails() {
+		if (piece) ui.shuffleReturn = { id: piece.id, href };
 	}
 
 	function onkeydown(e: KeyboardEvent) {
@@ -142,15 +190,31 @@
 			title="Shuffle settings"
 			onclick={() => (settingsOpen = true)}>⚙</button
 		>
-		<h1>Shuffle</h1>
-		<a class="icon-btn close" href={resolve('/(main)')} aria-label="Close shuffle" title="Close"
-			>✕</a
-		>
+		<h1>
+			Shuffle
+			{#if piece && order}<span class="position" data-testid="shuffle-position"
+					>{session.i + 1} of {order.length}</span
+				>{/if}
+		</h1>
+		<div class="top-actions">
+			{#if piece}
+				<button
+					type="button"
+					class="icon-btn"
+					aria-label="Reshuffle"
+					title="Reshuffle: a new order from the start"
+					onclick={reshuffle}>⤮</button
+				>
+			{/if}
+			<a class="icon-btn close" href={resolve('/(main)')} aria-label="Close shuffle" title="Close"
+				>✕</a
+			>
+		</div>
 	</header>
 
 	{#if library.status === 'error'}
 		<div class="empty"><p>Couldn’t open the library: {String(library.error)}</p></div>
-	{:else if !index || !settings}
+	{:else if !index || !settings || !order}
 		<div class="empty"><p class="muted">Loading library…</p></div>
 	{:else if piece}
 		{#key piece.id}
@@ -177,7 +241,11 @@
 							? 'Never practiced'
 							: `Last practiced ${relativeTime(stats.lastPracticed, ui.now)}`}
 					</p>
-					<a class="details" href={resolve('/(main)/piece/[id]', { id: piece.id })}>Open details</a>
+					<a
+						class="details"
+						href={resolve('/(main)/piece/[id]', { id: piece.id })}
+						onclick={openDetails}>Open details</a
+					>
 				</div>
 
 				<ShufflePlayer bind:this={playerUi} {piece} {index} />
@@ -205,7 +273,7 @@
 				</p>
 			</footer>
 		{/key}
-	{:else if matching.length === 0}
+	{:else if order.length === 0}
 		<div class="empty" role="status">
 			<p class="big" aria-hidden="true">⤮</p>
 			<h2>Nothing to shuffle</h2>
@@ -224,11 +292,11 @@
 		<div class="empty" role="status">
 			<h2>You’ve been through everything 🎉</h2>
 			<p class="muted">
-				{shown.length}
-				{shown.length === 1 ? 'piece' : 'pieces'} this round.
+				{order.length}
+				{order.length === 1 ? 'piece' : 'pieces'} this round.
 			</p>
 			<div class="empty-actions">
-				<button type="button" onclick={restart}>Restart</button>
+				<button type="button" onclick={reshuffle}>Reshuffle</button>
 				<a class="btn-link btn-quiet" href={resolve('/(main)')}>Done</a>
 			</div>
 		</div>
@@ -266,6 +334,17 @@
 		font-size: 1rem;
 		font-weight: 600;
 		color: var(--color-muted);
+	}
+
+	.position {
+		margin-left: var(--space-1);
+		font-weight: 400;
+		font-variant-numeric: tabular-nums;
+	}
+
+	.top-actions {
+		display: flex;
+		gap: var(--space-1);
 	}
 
 	.close {

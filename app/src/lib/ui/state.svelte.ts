@@ -37,6 +37,11 @@ class Ui {
 	/** The piece "Merge with…" is picking a partner for. */
 	mergePicking = $state<PieceId>();
 	toast = $state<Toast>();
+	/**
+	 * Set when "Open details" is followed from Shuffle, so that piece's detail view offers
+	 * "← Shuffle" (a history back to the same card). Cleared by any other navigation.
+	 */
+	shuffleReturn = $state<{ id: PieceId; href: string }>();
 	/** Epoch ms, refreshed every 30 s so relative times and date filters stay current. */
 	now = $state(Date.now());
 

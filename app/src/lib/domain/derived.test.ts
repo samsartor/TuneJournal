@@ -90,6 +90,18 @@ describe('buildIndex', () => {
 			NOW - 2 * DAY,
 			NOW - 30 * DAY
 		]);
+		// As of a moment: practice logged after it is left out.
+		const cooleys = lib.pieces[ids.cooleys];
+		expect(index.stats(cooleys, NOW - 2 * DAY)).toEqual({
+			timesPracticed: 2,
+			lastPracticed: NOW - 2 * DAY
+		});
+		expect(index.stats(cooleys, NOW - 3 * DAY)).toEqual({
+			timesPracticed: 1,
+			lastPracticed: NOW - 30 * DAY
+		});
+		expect(index.stats(cooleys, NOW - 31 * DAY)).toEqual({ timesPracticed: 0 });
+		expect(index.stats(cooleys)).toEqual({ timesPracticed: 2, lastPracticed: NOW - 2 * DAY });
 	});
 
 	it('counts tag usage case-insensitively, most used first, ignoring deleted pieces', () => {

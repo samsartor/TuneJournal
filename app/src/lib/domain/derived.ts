@@ -45,7 +45,11 @@ export interface LibraryIndex {
 	/** Distinct effective keys of live tunes and parts, sorted. */
 	readonly keys: string[];
 	get(id: PieceId): Piece | undefined;
-	stats(piece: Piece): PieceStats;
+	/**
+	 * Effective practice count and last time. With `asOf`, entries logged after it are left out
+	 * (Shuffle ranks pieces as of the moment its session started, §6.5).
+	 */
+	stats(piece: Piece, asOf?: Timestamp): PieceStats;
 	/**
 	 * Practice history, most recent first: the piece's own entries plus those of every ancestor,
 	 * each inherited one marked with the ancestor it came from (`viaPiece`).
@@ -331,7 +335,14 @@ export function buildIndex(library: Library): LibraryIndex {
 		},
 		get: (id) => library.pieces[id],
 		effectivePractice,
-		stats(piece) {
+		stats(piece, asOf) {
+			if (asOf !== undefined) {
+				// Most recent first, so the entries up to `asOf` are a suffix.
+				const entries = effectivePractice(piece);
+				const first = entries.findIndex((e) => e.at <= asOf);
+				if (first < 0) return { timesPracticed: 0 };
+				return { timesPracticed: entries.length - first, lastPracticed: entries[first].at };
+			}
 			let stats = statsCache.get(piece.id);
 			if (!stats) {
 				const entries = effectivePractice(piece);
@@ -447,7 +458,9 @@ export function matchesFilter(
 	index: LibraryIndex,
 	piece: Piece,
 	filter: ListSettings,
-	now: Timestamp
+	now: Timestamp,
+	/** Leave out practice logged after this (Shuffle's session start). */
+	asOf?: Timestamp
 ): boolean {
 	const kinds = Object.entries(filter.kinds).filter(([, on]) => on);
 	if (kinds.length > 0 && !filter.kinds[piece.kind]) return false;
@@ -476,7 +489,7 @@ export function matchesFilter(
 	}
 
 	if (filter.practiced) {
-		const last = index.stats(piece).lastPracticed;
+		const last = index.stats(piece, asOf).lastPracticed;
 		const recent = last !== undefined && now - last <= filter.practiced.days * DAY;
 		if (recent !== filter.practiced.within) return false;
 	}

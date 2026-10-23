@@ -57,6 +57,13 @@
 		if (piece) library.change((d) => updatePiece(d, id, { favorite: !piece.favorite }));
 	}
 
+	/** Straight back through history, so Back from Shuffle afterwards still leaves Shuffle. */
+	function backToShuffle(e: MouseEvent) {
+		if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+		e.preventDefault();
+		window.history.back();
+	}
+
 	async function remove() {
 		ui.delete(id);
 		await goto(resolve('/(main)'));
@@ -65,7 +72,13 @@
 
 <article class="detail">
 	<nav class="bar">
-		<a class="back" href={resolve('/(main)')}>← All pieces</a>
+		{#if ui.shuffleReturn?.id === id}
+			<!-- Opened from Shuffle: back to the same card (its URL carries seed, start and index). -->
+			<!-- eslint-disable-next-line svelte/no-navigation-without-resolve -- built with resolve() -->
+			<a class="back-shuffle" href={ui.shuffleReturn.href} onclick={backToShuffle}>← Shuffle</a>
+		{:else}
+			<a class="back" href={resolve('/(main)')}>← All pieces</a>
+		{/if}
 		{#if piece && !piece.deletedAt}
 			<div class="bar-actions">
 				<button type="button" class="btn-quiet" onclick={() => ui.openEdit(id)}>Edit</button>
@@ -244,7 +257,8 @@
 		gap: var(--space-2);
 	}
 
-	.back {
+	.back,
+	.back-shuffle {
 		display: inline-flex;
 		align-items: center;
 		min-height: var(--touch);

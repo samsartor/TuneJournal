@@ -448,13 +448,16 @@ than in a panel inside the dialog:
     temperature. For example, setting it to 2–5 leaves out unlearned tunes. Unrated tunes count
     as 1 for this filter.
   - Optionally, "respect current list filter".
-- **State:** a `shown` set lives only for the lifetime of the view.
+- **State:** a session is a seed, a start time and a position, kept in the URL as
+  `/shuffle?seed=…&at=…&i=…` (§14 "Decided for seeded Shuffle"). The order is fixed when the
+  session starts, so a reload, or going to a piece's details and back, lands on the same card.
+  The header shows "3 of 12" and a ⤮ **Reshuffle** button (new seed and start, from the top).
   - **Practiced** logs a practice entry. If the slider moved, it also saves the skill.
   - **Skip** persists nothing. A change to the skill slider is still saved, because that's an
     explicit edit.
-  - Either button adds the piece to `shown` and samples the next piece from the remaining
-    candidates. When none are left, show "You've been through everything 🎉" with a restart
-    option.
+  - Either button moves to the next position (updating `i` in place, so Back leaves Shuffle).
+    Past the end, show "You've been through everything 🎉" with a Reshuffle option.
+  - Changing the shuffle settings starts a new shuffle.
 
 **Selection algorithm.** Each candidate gets three features normalized to `[0, 1]`:
 
@@ -473,8 +476,13 @@ p     = softmax(logits over remaining candidates)
 Each temperature slider maps to `T ∈ [0.05, ∞)` on a log scale, with the top notch = ∞
 (the factor is ignored). Low T makes that factor dominate, which prioritises stale, weak, or
 loved pieces. High T makes it flat, so the pick is random. With all sliders at max, the
-shuffle is uniform. The domain layer implements this as a pure function with an injectable
-RNG, so it's unit-testable.
+shuffle is uniform.
+
+The session's whole order is drawn at once with the **Gumbel-top-k trick**: each candidate's key
+is `logit + G` with `G = -log(-log(u))`, and sorting by key, descending, has exactly the
+distribution of drawing one piece at a time from the softmax and removing it. Each `u` is a hash
+of `(seed, piece id)`, and the features are taken as of the session's start (`at`), so the order
+is a pure function of the seed, the start time and the library, and is unit-testable.
 
 ### 6.6 Player
 - A global persistent mini-player bar shows the current clip and its piece, with play/pause,
@@ -879,6 +887,7 @@ M6 notes:
   `effectiveSkill`), `features` (A, S, F), `weights` (features, logits and probabilities, for
   debugging and tests), `pickNext(candidates, settings, rng, now)`, the slider mapping
   (`temperatureAt` / `sliderPosition` / `temperatureLabel`) and `seededRng` (mulberry32).
+  (`pickNext` and `seededRng` were later replaced by the seeded Gumbel-top-k `shuffleOrder`, §14.)
   `setShuffleSettings` in `ops.ts` merges field by field like `setListSettings`. Tests in
   `domain/shuffle.test.ts`: each factor at a tiny temperature picks the extreme piece ≥ 99% of 2000
   seeded draws; all-∞ passes a chi-square test over 20 000 draws; candidates drop shown pieces,
@@ -1271,7 +1280,8 @@ Post-M6 notes:
   first" / "Weakest first" / "Favorites first", right = "Random", with words (Very strong … Faint,
   Off) as the value. A temperature of 0 (or so small that logits overflow) gives every top piece an
   equal share instead of NaN.
-- **Session state** (`shown`, the current card) lives in the route component only, so leaving
+- **Session state** (superseded by "Decided for seeded Shuffle" below: the session is now in the
+  URL) (`shown`, the current card) lives in the route component only, so leaving
   Shuffle or reloading starts a new round. Candidates are recomputed at each pick, so practice,
   edits and setting changes (on any device) apply from the next card on. A card whose piece is
   deleted or merged away elsewhere is skipped. With no card up, one is dealt as soon as something
@@ -1566,6 +1576,49 @@ Post-M6 notes:
   buttons on the selected profile rather than dragging chips: chips wrap, and buttons work the
   same with touch and keyboard. Undo is the toast's, for removal only; there's no undo history
   for slider edits.
+
+**Decided for seeded Shuffle (2026-10-23)**
+
+- **The order is Gumbel-top-k** (`shuffleOrder` in `domain/shuffle.ts`), replacing the one-at-a-time
+  sampler (`pickNext` and the mulberry32 `seededRng` are gone). Key = logit + Gumbel noise,
+  sorted descending: the same distribution as sequential softmax sampling without replacement
+  (unit-tested over 20 000 seeds for first and second place). Temperatures keep their meaning,
+  `null` = ∞ contributes nothing, and all ∞ is a uniform permutation. Comparison is on the
+  difference of logits plus the difference of noise, so huge logits from tiny temperatures still
+  compare by noise rather than rounding it away; infinite logits (T = 0) come first and tie
+  among themselves (an equal share, as `weights` says); ties then fall to the noise and finally
+  the piece id, so the sort is total and deterministic with no NaN.
+- **Per-piece uniforms from a hash, not an RNG stream:** `u = pieceUniform(seed, id)` takes the
+  top 52 bits of cyrb53(`seed` NUL `id`) and centres them in their bucket, so `u` is in
+  [2^-53, 1 - 2^-53], never 0 or 1. Adding, removing or filtering out a piece leaves everyone
+  else's relative order alone.
+- **As of the start:** features (staleness, practice count) and the list's "practiced within"
+  filter use practice logged up to `at` (`index.stats(piece, asOf)`, `matchesFilter(…, asOf)`),
+  so practising during the session (including a Set, which refreshes its tunes) doesn't reorder
+  anything.
+- **Route:** `/shuffle?seed=<8 base-36 chars>&at=<epoch ms>&i=<0-based index>`. Missing or
+  malformed seed/at on entry starts a fresh session and writes it in; a missing or bad `i` is 0.
+  Next/Skip/Practiced and Reshuffle update the URL with a shallow, replacing `goto`, so Back from
+  Shuffle leaves it. An `i` past the end shows the "been through everything" state.
+- **Kept order:** skill and favorite edits made during a session (the card's own skill slider,
+  say) would change a rebuilt order, so the order as first built is kept for the tab, in memory
+  and in `sessionStorage` (`tunejournal.shuffle`, keyed by seed, start and a settings
+  fingerprint). Reloading or going to details and back reuses it. A new tab, a shared URL or
+  unavailable storage rebuilds from the URL: then the piece at index `i` can differ if pieces were
+  added, deleted, or had their skill, favorite or kind changed since the session started.
+  Pieces deleted or merged away mid-session are stepped over; pieces added mid-session wait for
+  the next shuffle.
+- **What starts a new shuffle** (new seed and start, index 0): the ⤮ Reshuffle button (in the
+  header while a card is up, and on the end screen), any change to the temperatures, kinds,
+  skill range or "respect list filter" (or, when that's on, the list's filter but not its sort),
+  from this device or synced in. An empty session reshuffles as soon as something matches.
+- **Details and back:** "Open details" remembers the Shuffle URL; that piece's detail view then
+  shows "← Shuffle" (on both widths), which goes back in history to the same card. Any other
+  navigation forgets it, so it's only offered on the piece you came from.
+- **Per-card state:** the piece's own skill when its card came up (to tell whether the slider
+  moved, for `skillAfter`) is kept with the order, so it survives a reload in the same tab; it's
+  lost only when the order is rebuilt from the URL (then a Practiced after a slider move made
+  before the reload doesn't record `skillAfter`). Nothing else is per card.
 
 **Still open**
 

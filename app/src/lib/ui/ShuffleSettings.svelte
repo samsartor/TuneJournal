@@ -1,7 +1,7 @@
 <!--
 	Shuffle settings (PLAN.md §6.5), synced in `settings.shuffle`: the three temperatures, which
 	kinds to include, the skill range, and whether to follow the main list's filter. Every change
-	saves at once, and the count of matching pieces updates live.
+	saves at once and starts a new shuffle, and the count of matching pieces updates live.
 -->
 <script lang="ts">
 	import { KINDS, KIND_PLURAL } from '#lib/domain/format.ts';
@@ -27,7 +27,7 @@
 		settings: ShuffleSettings;
 		/** Pieces that match the settings. */
 		matching: number;
-		/** Of those, the ones not shown yet this session. */
+		/** Cards after the one that's up in this session's order. */
 		remaining: number;
 	} = $props();
 
@@ -93,6 +93,7 @@
 					<span class="muted">{`· ${remaining} left this round`}</span>
 				{/if}
 			</p>
+			<p class="note muted">Changing these starts a new shuffle.</p>
 
 			<section aria-labelledby="priority-heading">
 				<h3 id="priority-heading">What comes up first</h3>

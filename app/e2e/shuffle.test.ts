@@ -85,8 +85,8 @@ test('Practiced logs and advances, Skip logs nothing, then everything’s been s
 	await expect(page.getByText('2 pieces this round.')).toBeVisible();
 	await shot(page, info, 'shuffle-done');
 
-	// Restart deals again from everything.
-	await page.getByRole('button', { name: 'Restart' }).click();
+	// Reshuffle deals again from everything.
+	await page.getByRole('button', { name: 'Reshuffle' }).click();
 	await expect(shuffleCard(page)).toBeVisible();
 
 	await closeShuffle(page);
@@ -227,11 +227,11 @@ test('settings: kinds (Parts too), skill range and temperatures persist; empty s
 	// The list shows Tunes only, and the shuffle now follows it.
 	await expect(count).toHaveText(/^1 piece matches/);
 
-	// Nothing left that matches: an empty state that leads back to the settings.
+	// Nothing left that matches: the settings change starts a new (empty) shuffle, and an empty
+	// state leads back to the settings.
 	await sheet.getByRole('slider', { name: 'Minimum skill' }).fill('4');
 	await expect(count).toHaveText(/^0 pieces match/);
 	await sheet.getByRole('button', { name: 'Done' }).click();
-	await page.getByRole('button', { name: 'Skip' }).click();
 	await expect(page.getByRole('heading', { name: 'Nothing to shuffle' })).toBeVisible();
 	await page.getByRole('button', { name: 'Change settings' }).click();
 	await sheet.getByRole('slider', { name: 'Minimum skill' }).fill('1');
@@ -239,4 +239,121 @@ test('settings: kinds (Parts too), skill range and temperatures persist; empty s
 	await sheet.getByRole('button', { name: 'Done' }).click();
 	// A card is dealt as soon as something matches.
 	await expect(shuffleCard(page)).toBeVisible();
+});
+
+const position = (page: Page) => page.getByTestId('shuffle-position');
+const SESSION_URL = /\/shuffle\?seed=[0-9a-z]{8}&at=\d+&i=(\d+)$/;
+const sessionOf = (page: Page) => {
+	const url = new URL(page.url());
+	return {
+		seed: url.searchParams.get('seed'),
+		at: url.searchParams.get('at'),
+		i: url.searchParams.get('i')
+	};
+};
+
+test('the session lives in the URL: reload, details and back, Reshuffle, settings', async ({
+	page
+}, info) => {
+	for (const title of ['The Kesh', 'Cooley’s', 'The Butterfly', 'Out on the Ocean']) {
+		await addTune(page, info, { title });
+	}
+
+	await openShuffle(page);
+	await expect(page).toHaveURL(SESSION_URL);
+	await expect(position(page)).toHaveText('1 of 4');
+	const start = sessionOf(page);
+	expect(start.i).toBe('0');
+
+	// Advance to index 2: the URL follows.
+	await page.getByRole('button', { name: 'Skip' }).click();
+	await page.getByRole('button', { name: 'Skip' }).click();
+	await expect(position(page)).toHaveText('3 of 4');
+	await expect(page).toHaveURL(/&i=2$/);
+	expect(sessionOf(page)).toEqual({ ...start, i: '2' });
+	const third = (await cardTitle(page).textContent())!.trim();
+
+	// A reload lands on the same card.
+	await page.reload();
+	await expect(cardTitle(page)).toHaveText(third);
+	await expect(position(page)).toHaveText('3 of 4');
+	expect(sessionOf(page)).toEqual({ ...start, i: '2' });
+
+	// So does one rebuilt from the URL alone (no saved order in this tab).
+	await page.evaluate(() => sessionStorage.clear());
+	await page.reload();
+	await expect(cardTitle(page)).toHaveText(third);
+	await expect(position(page)).toHaveText('3 of 4');
+
+	// Details and the app's "← Shuffle" back.
+	await shuffleCard(page).getByRole('link', { name: 'Open details' }).click();
+	await expect(page.getByRole('heading', { level: 1, name: third })).toBeVisible();
+	await page.getByRole('link', { name: '← Shuffle' }).click();
+	await expect(cardTitle(page)).toHaveText(third);
+	await expect(position(page)).toHaveText('3 of 4');
+	expect(sessionOf(page)).toEqual({ ...start, i: '2' });
+
+	// Details and the browser's Back.
+	await shuffleCard(page).getByRole('link', { name: 'Open details' }).click();
+	await expect(page.getByRole('heading', { level: 1, name: third })).toBeVisible();
+	await page.goBack();
+	await expect(cardTitle(page)).toHaveText(third);
+	await expect(position(page)).toHaveText('3 of 4');
+
+	// Back from Shuffle leaves it, rather than stepping back through the cards.
+	await page.goBack();
+	await expect(page.getByRole('searchbox', { name: 'Search' })).toBeVisible();
+	await page.goForward();
+	await expect(cardTitle(page)).toHaveText(third);
+
+	// Reshuffle: a new seed, from the start.
+	await page.getByRole('button', { name: 'Reshuffle' }).click();
+	await expect(position(page)).toHaveText('1 of 4');
+	await expect(page).toHaveURL(/&i=0$/);
+	const reshuffled = sessionOf(page);
+	expect(reshuffled.seed).not.toBe(start.seed);
+
+	// Changing a temperature starts over too.
+	await page.getByRole('button', { name: 'Skip' }).click();
+	await expect(page).toHaveURL(/&i=1$/);
+	await page.getByRole('button', { name: 'Shuffle settings' }).click();
+	const sheet = settingsDialog(page);
+	await sheet.getByRole('slider', { name: 'Age' }).fill('20');
+	await sheet.getByRole('button', { name: 'Done' }).click();
+	await expect(page).toHaveURL(/&i=0$/);
+	await expect(position(page)).toHaveText('1 of 4');
+	expect(sessionOf(page).seed).not.toBe(reshuffled.seed);
+});
+
+test('practising mid-session keeps the order; an index past the end is the end state', async ({
+	page
+}, info) => {
+	for (const title of ['The Kesh', 'Cooley’s', 'The Butterfly']) {
+		await addTune(page, info, { title });
+	}
+	await openShuffle(page);
+	const titles: string[] = [];
+	for (let k = 0; k < 3; k++) {
+		titles.push((await cardTitle(page).textContent())!.trim());
+		await page.getByRole('button', { name: 'Practiced' }).click();
+	}
+	await expect(
+		page.getByRole('heading', { name: 'You’ve been through everything 🎉' })
+	).toBeVisible();
+	await expect(page).toHaveURL(/&i=3$/);
+
+	// Rebuilt from the URL, practice logged since the start doesn't reorder anything.
+	const url = new URL(page.url());
+	await page.evaluate(() => sessionStorage.clear());
+	for (let k = 0; k < 3; k++) {
+		url.searchParams.set('i', String(k));
+		await page.goto(url.pathname + url.search);
+		await expect(cardTitle(page)).toHaveText(titles[k]);
+	}
+	url.searchParams.set('i', '9');
+	await page.goto(url.pathname + url.search);
+	await expect(
+		page.getByRole('heading', { name: 'You’ve been through everything 🎉' })
+	).toBeVisible();
+	await expect(page.getByText('3 pieces this round.')).toBeVisible();
 });
