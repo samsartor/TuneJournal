@@ -61,15 +61,8 @@ class PlayerStore {
 	#videoHost?: HTMLElement;
 	#loadToken = 0;
 	#link = new LinkOutAdapter();
-	/** The setting a loaded synth clip was last rendered from. */
-	#synthSetting?: number;
-
-	constructor() {
-		// New synth options (instrument, times through, chords) re-render what's loaded, in place.
-		synth.onOptionsChange(() => {
-			if (this.#adapter instanceof SynthAdapter) this.#adapter.rerender({ force: true });
-		});
-	}
+	/** The setting and options a loaded synth clip was last rendered with. */
+	#synthRendered?: string;
 
 	/** The bar's element for the YouTube iframe. */
 	setVideoHost(el: HTMLElement | undefined) {
@@ -165,14 +158,14 @@ class PlayerStore {
 		if (kind === 'synth') {
 			const target = synthTarget(piece, source);
 			if (!target) throw new Error('This tune has no setting to play.');
-			this.#synthSetting = target.settingId;
-			// The piece's setting can change while it's loaded (Edit… → Change setting): render
-			// whichever is chosen now.
+			// The piece's setting, its tags, its playback profile or the clip's instrument can change
+			// while it's loaded: render with whatever they are now.
 			const { pieceId, clipId } = this.current!;
+			this.#synthRendered = this.#synthSignature(pieceId, clipId);
 			return new SynthAdapter((tempo, transpose) => {
 				const now = this.#lookup(pieceId, clipId);
 				const latest = (now && synthTarget(now.piece, now.source)) ?? target;
-				return synth.render(latest, tempo, transpose);
+				return synth.render(latest, synth.optionsFor(now?.piece, now?.clip), tempo, transpose);
 			});
 		}
 		if (kind === 'youtube') {
@@ -226,17 +219,28 @@ class PlayerStore {
 		this.#adapter?.setLoop(loop);
 	}
 
-	/** Keeps the bounds in step with the clip after an edit (unless a preview overrides them). */
+	/** What a synth clip's rendering depends on besides the speed: its setting and options. */
+	#synthSignature(pieceId: PieceId, clipId: ClipId): string | undefined {
+		const now = this.#lookup(pieceId, clipId);
+		const target = now && synthTarget(now.piece, now.source);
+		if (!now || !target) return undefined;
+		return JSON.stringify([target.settingId, synth.optionsFor(now.piece, now.clip)]);
+	}
+
+	/**
+	 * Keeps the bounds in step with the clip after an edit (unless a preview overrides them), and
+	 * re-renders a synthesized one, in place, when its setting or playback options changed (called
+	 * on every library change).
+	 */
 	syncClip(clip: Pick<Clip, 'start' | 'end'> | undefined) {
 		if (!clip) {
 			this.close();
 			return;
 		}
 		if (this.#adapter instanceof SynthAdapter && this.current) {
-			const now = this.#lookup(this.current.pieceId, this.current.clipId);
-			const target = now && synthTarget(now.piece, now.source);
-			if (target && target.settingId !== this.#synthSetting) {
-				this.#synthSetting = target.settingId;
+			const signature = this.#synthSignature(this.current.pieceId, this.current.clipId);
+			if (signature && signature !== this.#synthRendered) {
+				this.#synthRendered = signature;
 				this.#adapter.rerender({ force: true });
 			}
 		}

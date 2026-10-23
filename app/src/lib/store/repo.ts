@@ -10,6 +10,7 @@ import { IndexedDBStorageAdapter } from '@automerge/automerge-repo-storage-index
 import { BrowserWebSocketClientAdapter } from '@automerge/automerge-repo-network-websocket';
 import * as Automerge from '@automerge/automerge';
 import { SCHEMA_VERSION, emptyLibrary, migrate } from '#lib/domain/library.ts';
+import { parseLegacySynthOptions } from '#lib/domain/playback.ts';
 import type { Library } from '#lib/domain/types.ts';
 import { clearJournal, journalKey, readJournal, type KeyValueStore } from './journal.ts';
 
@@ -147,7 +148,32 @@ async function prepare(handle: DocHandle<Library>) {
 		await getRepo().flush([handle.documentId]);
 		clearJournal(browserStorage(), key);
 	}
-	if (handle.doc().schemaVersion < SCHEMA_VERSION) handle.change(migrate);
+	if (handle.doc().schemaVersion < SCHEMA_VERSION) {
+		const legacy = parseLegacySynthOptions(readLegacy());
+		handle.change((doc) => migrate(doc, legacy));
+	}
+	// The per-device synth options of before schema 2 are read once, for the migration above (which
+	// ignores them if another device already added the playback profiles), and then dropped.
+	forgetLegacy();
+}
+
+/** The old per-device synth options (instrument, times through, chords, humanize). */
+const LEGACY_SYNTH_KEY = 'tunejournal.synth';
+
+function readLegacy(): string | null {
+	try {
+		return globalThis.localStorage?.getItem(LEGACY_SYNTH_KEY) ?? null;
+	} catch {
+		return null;
+	}
+}
+
+function forgetLegacy() {
+	try {
+		globalThis.localStorage?.removeItem(LEGACY_SYNTH_KEY);
+	} catch {
+		// Nothing to forget.
+	}
 }
 
 /** Opens this device's Library doc, creating it on first run, and runs migrations. */

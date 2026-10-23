@@ -1,22 +1,34 @@
 <!--
-	Options for synthesized playback of thesession settings (PLAN.md §6.6): instrument, style,
-	times through the tune, chord accompaniment, and humanization (lilt, accent and attack on the
-	strong quavers). Device-local, like the speed; changing one re-renders whatever synthesized tune
-	is loaded in the player, in place. Shown in Settings and in a thesession recording's Edit dialog.
+	One playback profile's settings for synthesized thesession settings (PLAN.md §6.6, §14 "Tag
+	playback profiles"): instrument, times through the tune, chord accompaniment, and the feel (lilt,
+	accent and attack on the strong quavers). Sliders report once they settle; the caller writes the
+	change to the library, which re-renders whatever synthesized tune is loaded, in place.
 -->
 <script lang="ts">
 	import { onDestroy } from 'svelte';
 	import {
-		HUMANIZE_DEFAULTS,
 		HUMANIZE_OFF,
-		HUMANIZE_STYLES,
-		liltRatio,
-		type Humanize,
-		type HumanizeStyle
+		LILT_NOTCHES,
+		formatLilt,
+		liltNotch,
+		type Humanize
 	} from '#lib/domain/humanize.ts';
 	import { INSTRUMENTS, INSTRUMENT_IDS, MAX_TIMES_THROUGH } from '#lib/domain/synth.ts';
-	import type { InstrumentId } from '#lib/domain/synth.ts';
-	import { synth } from '#lib/store/synth.svelte.ts';
+	import type { PlaybackProfileSettings } from '#lib/domain/types.ts';
+
+	let {
+		settings,
+		seed,
+		label,
+		onchange
+	}: {
+		settings: PlaybackProfileSettings;
+		/** The feel "Default" goes back to: this profile's seeded one. */
+		seed: Humanize;
+		/** The group's accessible name, e.g. "Reel profile". */
+		label: string;
+		onchange: (patch: Partial<PlaybackProfileSettings>) => void;
+	} = $props();
 
 	const uid = $props.id();
 	const times = Array.from({ length: MAX_TIMES_THROUGH }, (_, i) => i + 1);
@@ -31,39 +43,65 @@
 		label: string;
 		hint: string;
 		text: (v: number) => string;
+		/** The slider's position for a value, and back. */
+		toSlider: (v: number) => number;
+		fromSlider: (p: number) => number;
+		min: number;
+		max: number;
+		step: number;
 	}[] = [
 		{
 			field: 'lilt',
 			label: 'Lilt',
-			hint: 'The strong quaver longer, the next ones shorter.',
-			text: (v) => (v === 0 ? 'Even' : `${liltRatio(v)}`)
+			hint: 'The strong quaver against each of the others: 1.5:1 makes it half as long again. Below Even, the reverse.',
+			text: formatLilt,
+			toSlider: liltNotch,
+			fromSlider: (p) => LILT_NOTCHES[p] ?? 1,
+			min: 0,
+			max: LILT_NOTCHES.length - 1,
+			step: 1
 		},
 		{
 			field: 'accent',
 			label: 'Accent',
-			hint: 'The strong quavers louder, the others softer.',
-			text: (v) => (v === 0 ? 'Off' : signed(v))
+			hint: 'The strong quavers louder, the others softer. Below 0, the reverse.',
+			text: (v) => (v === 0 ? 'Off' : signed(v)),
+			toSlider: (v) => v,
+			fromSlider: (p) => p,
+			min: -100,
+			max: 100,
+			step: 5
 		},
 		{
 			field: 'attack',
 			label: 'Attack',
 			hint: 'The strong notes start sharper (or softer, below 0).',
-			text: (v) => (v === 0 ? 'Off' : signed(v))
+			text: (v) => (v === 0 ? 'Off' : signed(v)),
+			toSlider: (v) => v,
+			fromSlider: (p) => p,
+			min: -100,
+			max: 100,
+			step: 5
 		}
 	];
 
 	/** Slider positions not yet applied (a drag in progress). */
 	let draft = $state<Partial<Humanize>>({});
 	let timer: ReturnType<typeof setTimeout> | undefined;
-	const humanize = $derived({ ...synth.options.humanize, ...draft });
+	const feel = $derived({
+		lilt: settings.lilt,
+		accent: settings.accent,
+		attack: settings.attack,
+		...draft
+	});
 
 	function commit() {
 		clearTimeout(timer);
 		timer = undefined;
 		if (Object.keys(draft).length === 0) return;
-		const next = { ...synth.options.humanize, ...draft };
+		const patch = draft;
 		draft = {};
-		synth.setOptions({ humanize: next });
+		onchange(patch);
 	}
 
 	function slide(field: Amount, value: number, settled: boolean) {
@@ -73,10 +111,10 @@
 		else timer = setTimeout(commit, SETTLE_MS);
 	}
 
-	function setHumanize(h: Humanize) {
+	function setFeel(h: Humanize) {
 		clearTimeout(timer);
 		draft = {};
-		synth.setOptions({ humanize: h });
+		onchange({ lilt: h.lilt, accent: h.accent, attack: h.attack });
 	}
 
 	const same = (a: Humanize, b: Humanize) =>
@@ -85,13 +123,13 @@
 	onDestroy(commit);
 </script>
 
-<div class="synth-options" role="group" aria-label="Synthesized playback">
+<div class="synth-options" role="group" aria-label={label}>
 	<div class="field">
 		<label for="{uid}-instrument">Instrument</label>
 		<select
 			id="{uid}-instrument"
-			value={synth.options.instrument}
-			onchange={(e) => synth.setOptions({ instrument: e.currentTarget.value as InstrumentId })}
+			value={settings.instrument}
+			onchange={(e) => onchange({ instrument: e.currentTarget.value })}
 		>
 			{#each INSTRUMENT_IDS as id (id)}
 				<option value={id}>{INSTRUMENTS[id].label}</option>
@@ -99,27 +137,11 @@
 		</select>
 	</div>
 	<div class="field">
-		<label for="{uid}-style">Style</label>
-		<select
-			id="{uid}-style"
-			value={synth.options.humanize.style}
-			aria-describedby="{uid}-style-hint"
-			onchange={(e) =>
-				synth.setOptions({
-					humanize: { ...humanize, style: e.currentTarget.value as HumanizeStyle }
-				})}
-		>
-			{#each Object.entries(HUMANIZE_STYLES) as [id, label] (id)}
-				<option value={id}>{label}</option>
-			{/each}
-		</select>
-	</div>
-	<div class="field">
 		<label for="{uid}-times">Times through</label>
 		<select
 			id="{uid}-times"
-			value={String(synth.options.timesThrough)}
-			onchange={(e) => synth.setOptions({ timesThrough: Number(e.currentTarget.value) })}
+			value={String(settings.timesThrough)}
+			onchange={(e) => onchange({ timesThrough: Number(e.currentTarget.value) })}
 		>
 			{#each times as n (n)}
 				<option value={String(n)}>{n}×</option>
@@ -129,8 +151,8 @@
 	<label class="check">
 		<input
 			type="checkbox"
-			checked={synth.options.chords}
-			onchange={(e) => synth.setOptions({ chords: e.currentTarget.checked })}
+			checked={settings.chords}
+			onchange={(e) => onchange({ chords: e.currentTarget.checked })}
 		/>
 		Chord accompaniment
 	</label>
@@ -140,23 +162,22 @@
 			<button
 				type="button"
 				class="btn-quiet"
-				disabled={same(humanize, HUMANIZE_OFF)}
-				onclick={() => setHumanize({ ...humanize, lilt: 0, accent: 0, attack: 0 })}
-				>As written</button
+				disabled={same(feel, HUMANIZE_OFF)}
+				onclick={() => setFeel(HUMANIZE_OFF)}>As written</button
 			>
 			<button
 				type="button"
 				class="btn-quiet"
-				disabled={same(humanize, HUMANIZE_DEFAULTS)}
-				onclick={() => setHumanize({ ...HUMANIZE_DEFAULTS, style: humanize.style })}>Default</button
+				disabled={same(feel, seed)}
+				onclick={() => setFeel(seed)}>Default</button
 			>
 		</div>
-		<p class="muted hint" id="{uid}-style-hint">
-			On the strong quavers: 1, 3, 5, 7 of a reel's bar, 1 and 4 of a jig's. Old-time puts the
-			accent and attack on the quavers between. Below 0 does the reverse.
+		<p class="muted hint">
+			On the strong quavers: 1, 3, 5, 7 of a reel’s bar, 1 and 4 of a jig’s. Below 0, the quavers
+			between get the emphasis instead.
 		</p>
 		{#each AMOUNTS as amount (amount.field)}
-			{@const value = humanize[amount.field]}
+			{@const value = feel[amount.field]}
 			<div class="amount">
 				<div class="row">
 					<label for="{uid}-{amount.field}">{amount.label}</label>
@@ -165,14 +186,16 @@
 				<input
 					id="{uid}-{amount.field}"
 					type="range"
-					min="-100"
-					max="100"
-					step="5"
-					{value}
+					min={amount.min}
+					max={amount.max}
+					step={amount.step}
+					value={amount.toSlider(value)}
 					aria-valuetext={amount.text(value)}
 					aria-describedby="{uid}-{amount.field}-hint"
-					oninput={(e) => slide(amount.field, Number(e.currentTarget.value), false)}
-					onchange={(e) => slide(amount.field, Number(e.currentTarget.value), true)}
+					oninput={(e) =>
+						slide(amount.field, amount.fromSlider(Number(e.currentTarget.value)), false)}
+					onchange={(e) =>
+						slide(amount.field, amount.fromSlider(Number(e.currentTarget.value)), true)}
 				/>
 				<p class="hint muted" id="{uid}-{amount.field}-hint">{amount.hint}</p>
 			</div>

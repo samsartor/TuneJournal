@@ -167,11 +167,30 @@ optional unless noted. The shapes are designed around CRDT merge behaviour:
 type PieceKind = 'session' | 'set' | 'tune' | 'part';
 
 interface Library {
-  schemaVersion: number;
+  schemaVersion: number;                   // currently 2 (2 added settings.playback)
   pieces: Record<PieceId, Piece>;
   sources: Record<SourceId, Source>;       // shared by many clips across pieces
   links: Record<LinkId, Link>;             // many-to-many piece relations
-  settings: Settings;                      // shuffle temps, default sort, etc. (synced)
+  settings: Settings;                      // shuffle temps, default sort, playback profiles (synced)
+}
+
+interface PlaybackSettings {               // settings.playback: synth playback per tag (§14)
+  default: PlaybackProfileSettings;        // catches every piece no profile matches; shown last
+  profiles: Record<string, PlaybackProfile>; // keyed by tagKey(tag), so concurrent adds merge
+}
+
+interface PlaybackProfileSettings {        // flat, so concurrent edits to different fields merge
+  instrument: InstrumentId;                // fiddle | flute | whistle | accordion | piano
+  timesThrough: number;                    // 1–4
+  chords: boolean;
+  lilt: number;                            // long:short ratio of the strong quaver, 0.5–2; 1 = even
+  accent: number;                          // −100…100 on the strong quavers; negative de-emphasises
+  attack: number;                          // −100…100
+}
+
+interface PlaybackProfile extends PlaybackProfileSettings {
+  tag: string;                             // as typed; matched case-insensitively
+  order: string;                           // fractional index; the first match wins
 }
 
 interface Piece {
@@ -206,6 +225,7 @@ interface Clip {                           // a (possibly trimmed) view onto a S
   key?: string;                            // key as played in this recording (a thesession link: its setting's)
   firstNotes?: string;                     // ABC opening as played here (a thesession link: its setting's)
   note?: string;
+  instrument?: InstrumentId;               // synthesized thesession link only: overrides its profile's
   addedAt: number;
 }
 
@@ -278,6 +298,11 @@ Notes:
   - Only Part → Tune inherits attributes. Tunes don't inherit from Sets, and Sets don't
     inherit from Sessions. Practice history is different: it propagates up the whole graph
     (above).
+- **Playback profiles** (`settings.playback`, §14 "Tag playback profiles"): a synthesized tune
+  plays with the first profile, in the profiles' order, whose tag the piece has, never the order
+  of the piece's own tags. A Part also has its Tune's tags for this (the Part → Tune rule above);
+  nothing else is inherited. Anything unmatched uses `default`. A recording may override only
+  the instrument (`clip.instrument`). Schema 2 seeds Old Time, Reel, Jig and Default.
 - Data that is *suggested but not stored* goes in the integration cache, not the doc. One
   example is "thesession sets this tune appears in". The user can **promote** a suggestion
   into a real `set` piece plus links.
@@ -481,14 +506,19 @@ RNG, so it's unit-testable.
   marked "♪ Synth" on the clip row, in the mini-player and in Shuffle, since it isn't a real
   recording. Speed re-renders at the new tempo rather than time-stretching (the stretched
   rendering bridges the fraction of a second until then), and the player, trim and playhead all
-  work in *tune time* (seconds at 100%), so a trim means the same bars at every speed. Options,
-  per device: instrument (fiddle, flute, whistle, accordion, piano), style (Irish or Old-time),
-  times through (1–4, default 2, the ABC's own repeats honoured), chord accompaniment, and a
-  **Feel** group of three sliders from −100 to +100 for the strong quavers: **Lilt** (shown as the
-  long:short ratio of a quaver pair, "Even" at 0), **Accent** and **Attack**, with "As written"
-  (all 0) and "Default" buttons. Sliders re-render once they settle. In Settings and in the
-  recording's Edit dialog, which also has **Show notation** (abcjs sheet music, highlighting the
-  note being played). Without a chosen setting, or offline before the tune was ever loaded, the link opens
+  work in *tune time* (seconds at 100%), so a trim means the same bars at every speed. How it
+  plays is set per tag in **playback profiles** (Settings → Synthesized playback, synced): the
+  profiles' tags are chips in priority order, with an add-a-tag search like a piece's tags and ×
+  to remove (with Undo); a fixed **Default** chip comes last and catches everything else. Tapping
+  a chip edits that profile: instrument (fiddle, flute, whistle, accordion, piano), times through
+  (1–4, the ABC's own repeats honoured), chord accompaniment, and a **Feel** group for the strong
+  quavers: **Lilt** (the long:short ratio, 1:2 to 2:1 in notches, "Even" in the middle),
+  **Accent** and **Attack** (−100 to +100; below 0 de-emphasises them), with "As written" and
+  "Default" (the tag's seeded feel) buttons, and ‹ Earlier / Later › to change its priority.
+  Sliders re-render once they settle. The recording's Edit dialog shows which profile applies
+  ("Playback: Reel profile", linking to it in Settings), an optional **Instrument** override for
+  that recording, and **Show notation** (abcjs sheet music, highlighting the note being
+  played). Without a chosen setting, or offline before the tune was ever loaded, the link opens
   thesession.org as before. Decisions in §14 "Synthesized playback".
 - The **trim editor** (Trim, and Split's region picker) has its own transport, since the
   mini-player bar sits behind its dialog: play/pause, a playhead you can tap or drag on the
@@ -1357,14 +1387,14 @@ Post-M6 notes:
   editor draws the 100% rendering. The player re-renders in place when the options change or the
   piece's setting changes.
 - **Audio cache keys:** `synth:v{SYNTH_VERSION}:s{settingId}:{FNV hash of the full ABC}:{instrument}:{chords|
-  melody}[:t{semitones}][:h{lilt},{accent},{attack}[o]]@{tempo}` (the `h` part from §14 "Synth
+  melody}[:t{semitones}][:hr{lilt},{accent},{attack}]@{tempo}` (the `h` part from §14 "Synth
   humanization"), so an edited setting, other times through or options never reuse
   a stale rendering. After each render we keep the 3 newest renderings of that tune and options
   and 24 synth renderings in all (they're regenerable); "Remove downloaded recordings" drops them
   too.
-- **Options are device-local** (`localStorage`, `tunejournal.synth`), like the speed: they're
-  listening preferences, and a phone and a laptop may want different instruments. Defaults: fiddle,
-  2 times through, chords off (few thesession settings have chord symbols, and the piano's
+- **Options** were device-local (`localStorage`, `tunejournal.synth`) until 2026-10-23; they're
+  now per-tag playback profiles in the synced library (§14 "Tag playback profiles"). Defaults:
+  fiddle, 2 times through, chords off (few thesession settings have chord symbols, and the piano's
   oom-pah can mask the tune). No metronome: abcjs' drum track needs percussion samples we don't
   ship, so it's left for later.
 - **Soundfont:** a subset of FluidR3_GM (CC BY 3.0) from gleitz/midi-js-soundfonts, in abcjs'
@@ -1407,7 +1437,7 @@ Post-M6 notes:
   offer), then the setting step; closing at the setting step is *Skip*. Picking another tune
   after ‹ relinks, as before.
 - **Previews are their own player** (`audio/preview.svelte.ts`): a `SynthAdapter` on its own
-  `<audio>`, rendering through `synth.render`, so it shares the per-device options, the renderer
+  `<audio>`, rendering through `synth.render`, so it shares the playback profiles, the renderer
   and the OPFS synth cache (a setting heard at 100% plays at once once chosen) but never touches
   the library, the clips or the mini-player. It has its own speed (starting at 100%, kept while the
   app is open, not persisted), since previews are for picking, not practice.
@@ -1445,7 +1475,7 @@ Post-M6 notes:
   barndances, strathspeys, polkas, waltzes, three-twos) and 3 in compound ones (`6/8`, `9/8`,
   `12/8`, `3/8`: jigs, slip jigs, slides). Strong positions are the first of each group, counting
   from 1 in the bar: 1 mod 2 (quavers 1, 3, 5, 7 of a reel bar, i.e. every crotchet beat) or
-  1 mod 3 (1, 4, 7, 10). We read "the 1st and 3rd beat" as the first two strong quavers of that
+  1 mod 3 (1, 4, 7, 10). Always these: no style setting moves them (2026-10-23, below). We read "the 1st and 3rd beat" as the first two strong quavers of that
   rule rather than as crotchets 1 and 3, since the lilt is a quaver-pair thing and abcjs' velocity
   already marks the bar's first beat. Other meters (5/8, 7/8, x/16) aren't humanized. The meter is
   the parsed tune's (`getMeterFraction`), which is the thesession type's (§14 synthesized playback).
@@ -1456,32 +1486,86 @@ Post-M6 notes:
   request carries `timesThrough`) or completes the short bar before it (Cooley's `|:D2|…E2:|`);
   any other short bar counts from its start, as abcjs' own accents do. A pickup group missing its
   first quaver isn't lilted.
-- **Lilt** is a piecewise-linear time warp per group: the first quaver grows by `lilt/100 × ⅓`
-  of a quaver and the rest of the group shrinks to fit, so group boundaries, bar lines, the tune's
-  length, trims (in tune time) and the notation's bar timing never move. Every note's start and
-  end go through it, so triplets, grace notes, crotchets across groups and the chord/bass tracks
-  all stay consistent and in order. 100 = 2:1 pairs in a reel; negative reverses it. The notation
-  highlight still uses abcjs' even timing, so an off-beat note's highlight leads its sound by a
-  fifteenth of a quaver at the default (10 ms in a reel), a third at 100.
+- **Lilt** is a ratio (since 2026-10-23): the strong quaver's length against each of the others
+  in its group, 0.5–2 (1 = even; below 1 the strong quaver is the short one). With `n` quavers
+  after the first (1 in a reel's pair, 2 in a jig's three), the first becomes
+  `r(1 + n)/(r + n)` quavers and the others share the rest equally, by a piecewise-linear time
+  warp per group, so group boundaries, bar lines, the tune's length, trims (in tune time) and the
+  notation's bar timing never move. A short group uses the same formula with the `n` it has. Every
+  note's start and end go through it, so triplets, grace notes, crotchets across groups and the
+  chord/bass tracks all stay consistent and in order. The slider has 23 notches, roughly even on a
+  log scale and symmetric about 1 (1.05, 1.1, 1.15, 1.2, 1.25, 1.33, 1.4, 1.5, 1.6, 1.75, 2 and
+  their reciprocals), shown as "1.5:1", "Even" or "1:1.5". The notation highlight still uses
+  abcjs' even timing, so an off-beat note's highlight leads its sound a little (50 ms in a reel at
+  2:1).
 - **Accent** multiplies velocity: strong ×(1 + k), others ×(1 − k/(group − 1)), k = accent/100 ×
   0.5, so the average stays about the same; rounded and clamped to 1–127 (abcjs keys sounds by
-  integer velocity; `place-note` maps velocity linearly to gain, v/96). Grace notes are left
-  alone; off-grid notes (triplet middles) count as weak.
+  integer velocity; `place-note` maps velocity linearly to gain, v/96). Grace notes keep abcjs'
+  own velocity (⅔ of their main note's); off-grid notes (triplet middles) are left alone.
+- **Grace notes (fixed 2026-10-23):** abcjs' flattener plays graces *inside* their main note's
+  time: `writeGraceNotes` puts them at the main note's written start (style `'grace'`, velocity
+  ⅔), together taking half its length, and the main note then starts halfway through
+  (`p.duration /= 2; p.start += p.duration`). So `{g}A2` on a beat became a grace on the beat and
+  an A on the off-beat quaver, which counted as weak and got softened, and `{ag}f` put f off the
+  grid. Now a note that starts where a run of graces (just before it in the track) ends takes its
+  stress from where the run starts, its written position: the main note gets the strong or weak
+  accent and the attack onset (at its own, warped, start), the graces are never accented, and both
+  still go through the lilt warp. Unit tests use abcjs' real sequence for such a tune.
 - **Attack**: abcjs can't change a sample's attack, so after rendering, each strong onset (after
-  the warp, in seconds) gets a 50 ms gain envelope on the mixed buffer, `1 + b(1 − x)²`, with
+  the warp, in seconds; a graced note's own start, not its graces') gets a 50 ms gain envelope on the mixed buffer, `1 + b(1 − x)²`, with
   b = 2 × attack/100 above 0 (×3 at the onset at 100) or attack/100 below (a fade in from silence
   at −100), cut short at the next strong onset. Clipping isn't an issue: the buffer is float, and
   the WAV is normalized to the 0.89 peak afterwards.
-- **Old-time style** puts accent and attack on the last quaver of each group (0 mod 2 in a reel,
-  0 mod 3 in a jig); the lilt is the same. thesession has no old-time type, so it's a per-device
-  choice next to the instrument.
-- **Defaults** (Irish): lilt 20 (pairs 1.14:1), accent 20 (×1.1 / ×0.9), attack 15 (×1.3 at the
-  onset). Stored with the other synth options (`humanize` in `tunejournal.synth`); older stored
-  options get the defaults. At 0, 0, 0 the renderer skips humanization entirely, so the rendering
-  is byte-identical to before (checked against the previous renderer) and its cache key has no
-  `h` part, so existing cached renderings stay valid. The style is in the key only when accent or
-  attack is non-zero. Sliders commit 400 ms after the last movement or on release; previews and
-  the player share the options through the synth store.
+- **No style setting (2026-10-23):** the first version had an Old-time style that moved accent
+  and attack to the last quaver of each group. It's gone: old-time is a profile with a negative
+  accent, which softens the strong quavers and so makes the others relatively stronger, and
+  nothing inverts a slider silently.
+- **Settings** come from the piece's tag playback profile (§14 "Tag playback profiles"). As
+  written (lilt 1, accent 0, attack 0) the renderer skips humanization entirely, so the rendering
+  is byte-identical to the plain one and its cache key has no humanize part. Otherwise the key part
+  is `hr{lilt},{accent},{attack}` (e.g. `hr1.5,-20,0`); the `hr` sets these apart from the first
+  version's `h20,20,15` keys, whose lilt scale and grace handling differ. Sliders commit 400 ms
+  after the last movement or on release.
+
+**Decided for tag playback profiles (2026-10-23)**
+
+- **Per tag, not per device or per recording:** synth settings (instrument, times through,
+  chords, lilt, accent, attack) live in ordered profiles keyed by tag. A piece plays with the
+  first profile, in the profiles' order, whose tag it has; the order of the piece's own tags plays
+  no part. Tags compare with `tagKey` (case- and whitespace-insensitive), as everywhere else. A Part
+  also has its Tune's tags (the Tune it inherits skill and key from, `inheritsFrom`); only Parts
+  inherit. No match: the **Default** profile, which always exists, is shown last, and can't be
+  removed or added as a tag. thesession links add the type tag (`typeTag`: "Reel", "Jig", "Slip
+  Jig"…), so those profiles match on their own.
+- **Seeded** in this order, for new libraries and by the schema 2 migration: Old Time (lilt 1.5,
+  accent −20, attack 0), Reel (Even, +30, +10), Jig (1.1, +30, +10), then Default (as written).
+  Old Time comes first so tagging a reel "Old Time" makes it old-time. All on fiddle, twice
+  through, no chords.
+- **Stored in the synced Library doc** (`settings.playback`, §5): they're keyed by tags, which
+  are library data, so they follow the user across devices. Profiles are a map keyed by
+  `tagKey(tag)` (concurrent adds of one tag merge into one profile) with a fractional-index
+  `order`; every setting is its own field (concurrent edits to different settings merge); the
+  Default is its own object. Removing a profile deletes its entry (Undo puts a copy back).
+- **Migration:** `SCHEMA_VERSION` 2. `migrate` seeds the profiles when `settings.playback` is
+  missing. The old per-device options (`localStorage` `tunejournal.synth`) are read once, when
+  this device runs that migration, and their instrument, times through and chords go into every
+  seeded profile (so a whistle player stays on whistle). If the doc already has profiles (another
+  device migrated and synced first), they win and the old options are ignored. Either way the
+  key is then deleted and never read again; the old humanize values aren't carried over.
+- **Per recording, only the instrument:** `clip.instrument` on the synthesized thesession clip,
+  absent for "From profile (Fiddle)". The Edit recording dialog shows "Playback: Reel profile"
+  with a link to that profile in Settings (`/settings?profile=reel#synth`).
+- **Everything that renders resolves the profile when it renders:** the mini-player and Shuffle
+  (through the player), the trim editor's waveform, and the picker previews. The player re-renders
+  a loaded synth clip in place when its setting or resolved options change (any library change,
+  e.g. a profile edited in Settings or a tag added). In the picker, the chosen tune's type tag
+  counts as one of the edited piece's tags, so a reel previews with the Reel profile unless the
+  piece's own tags match an earlier one. The cache key is still built from the resolved options.
+- **UI:** the chips reuse `TagInput` (same search and suggestions as a piece's tags) with a
+  select button on each chip and a fixed Default chip. Priority changes with ‹ Earlier / Later ›
+  buttons on the selected profile rather than dragging chips: chips wrap, and buttons work the
+  same with touch and keyboard. Undo is the toast's, for removal only; there's no undo history
+  for slider edits.
 
 **Still open**
 

@@ -11,7 +11,8 @@
 	import { oembed } from '#lib/store/oembed.svelte.ts';
 	import DriveSettings from '#lib/ui/DriveSettings.svelte';
 	import SyncIndicator from '#lib/ui/SyncIndicator.svelte';
-	import SynthOptions from '#lib/ui/SynthOptions.svelte';
+	import { page } from '$app/state';
+	import PlaybackProfiles from '#lib/ui/PlaybackProfiles.svelte';
 	import { ui } from '#lib/ui/state.svelte.ts';
 
 	let usage = $state<{ used: number; quota: number }>();
@@ -235,13 +236,14 @@
 		{/if}
 	</section>
 
-	<section>
+	<section id="synth">
 		<h2>Synthesized playback</h2>
 		<p class="muted small">
 			A thesession.org link with a chosen setting plays a synthesized version of that setting,
-			marked ♪ Synth. These options apply on this device; the speed control sets the tempo.
+			marked ♪ Synth. How it plays is set per tag, and synced with your library; the speed control
+			sets the tempo.
 		</p>
-		<SynthOptions />
+		<PlaybackProfiles initial={page.url.searchParams.get('profile') ?? undefined} />
 	</section>
 
 	<DriveSettings />

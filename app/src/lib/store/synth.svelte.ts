@@ -1,16 +1,17 @@
 // Synthesized playback of thesession settings for the UI and the player (PLAN.md §6.6, §14
-// "Synthesized playback"): the device-local options, whether a thesession link can play here,
-// and renderings, kept in the audio cache (OPFS) by setting, options and tempo.
+// "Synthesized playback"): whether a thesession link can play here, the options a piece plays
+// with (its tag playback profile, from the synced library: domain/playback.ts), and renderings,
+// kept in the audio cache (OPFS) by setting, options and tempo.
 
 import { asset } from '$app/paths';
 import { audioCache } from '#lib/audio/cache.ts';
 import { preloadSynth, renderTune } from '#lib/audio/synth.ts';
 import { clipPlayback, type Playback, type SynthAvailability } from '#lib/domain/providers.ts';
+import { synthOptionsFor } from '#lib/domain/playback.ts';
 import {
 	DEFAULT_SYNTH_OPTIONS,
 	buildTuneAbc,
 	isSynthCacheKey,
-	normalizeSynthOptions,
 	renderRequest,
 	synthCacheFamily,
 	synthCacheKey,
@@ -19,11 +20,10 @@ import {
 	type SynthOptions,
 	type SynthTarget
 } from '#lib/domain/synth.ts';
-import type { Piece, Source } from '#lib/domain/types.ts';
+import type { Clip, Piece, Source } from '#lib/domain/types.ts';
 import { audioFiles } from './audio.svelte.ts';
+import { library } from './library.svelte.ts';
 import { loadErrorMessage, theSession } from './thesession.svelte.ts';
-
-const OPTIONS_KEY = 'tunejournal.synth';
 
 /** The self-hosted soundfont's folder (asset() only takes files, so go through its README). */
 const SOUNDFONT_URL = asset('soundfont/README.txt').replace(/README\.txt$/, '');
@@ -33,20 +33,9 @@ const KEEP_PER_TUNE = 3;
 /** Renderings kept in all. Each is a few MB, and any can be rendered again. */
 const KEEP_TOTAL = 24;
 
-function readOptions(): SynthOptions {
-	try {
-		const stored = globalThis.localStorage?.getItem(OPTIONS_KEY);
-		return normalizeSynthOptions(stored ? JSON.parse(stored) : undefined);
-	} catch {
-		return { ...DEFAULT_SYNTH_OPTIONS };
-	}
-}
-
 class SynthStore {
-	options = $state<SynthOptions>(readOptions());
 	online = $state(globalThis.navigator?.onLine ?? true);
 
-	#listeners = new Set<() => void>();
 	#inFlight = new Map<string, Promise<Blob>>();
 
 	constructor() {
@@ -56,20 +45,18 @@ class SynthStore {
 		}
 	}
 
-	setOptions(patch: Partial<SynthOptions>) {
-		this.options = normalizeSynthOptions({ ...this.options, ...patch });
-		try {
-			globalThis.localStorage?.setItem(OPTIONS_KEY, JSON.stringify(this.options));
-		} catch {
-			// Only a preference.
-		}
-		for (const listener of this.#listeners) listener();
-	}
-
-	/** Called after the options change (the player re-renders what's loaded). */
-	onOptionsChange(listener: () => void): () => void {
-		this.#listeners.add(listener);
-		return () => this.#listeners.delete(listener);
+	/**
+	 * The options a piece's recording plays with: the piece's tag playback profile (`extraTags`
+	 * counting as its tags too), with the clip's instrument override. Read when rendering, so the
+	 * latest profile settings apply.
+	 */
+	optionsFor(
+		piece: Piece | undefined,
+		clip?: Pick<Clip, 'instrument'>,
+		extraTags: readonly string[] = []
+	): SynthOptions {
+		const doc = library.doc;
+		return doc ? synthOptionsFor(doc, piece, clip, extraTags) : { ...DEFAULT_SYNTH_OPTIONS };
 	}
 
 	/**
@@ -111,12 +98,12 @@ class SynthStore {
 	}
 
 	/**
-	 * A rendering of the setting at `rate` × its 100% tempo: from the audio cache, else rendered
+	 * A rendering of the setting with `options` (see `optionsFor`) at `rate` × its 100% tempo: from the audio cache, else rendered
 	 * (and cached). Concurrent asks for the same rendering share one.
 	 */
-	async render(target: SynthTarget, rate = 1, transpose = 0): Promise<Blob> {
-		const tune = buildTuneAbc(await this.setting(target), this.options.timesThrough);
-		const request = renderRequest(tune, this.options, rate, transpose);
+	async render(target: SynthTarget, options: SynthOptions, rate = 1, transpose = 0): Promise<Blob> {
+		const tune = buildTuneAbc(await this.setting(target), options.timesThrough);
+		const request = renderRequest(tune, options, rate, transpose);
 		const key = synthCacheKey(target.settingId, request);
 		let pending = this.#inFlight.get(key);
 		if (!pending) {

@@ -3,7 +3,7 @@
 
 import { expect, test, type Locator, type Page, type TestInfo } from '@playwright/test';
 import { RELAY, isMobile, open } from './helpers';
-import { addCooleys, mockTheSession, picker, searchTheSession } from './thesession';
+import { addCooleys, fixture, mockTheSession, picker, searchTheSession } from './thesession';
 
 test.beforeEach(async ({ page }) => {
 	await page.routeWebSocket(RELAY, (ws) => ws.close());
@@ -388,4 +388,77 @@ test('the recording’s Edit dialog changes the setting and the tune in the pick
 	await expect(edit).toBeVisible();
 	await expect(edit.getByRole('button', { name: 'Change tune…' })).toBeFocused();
 	await expect(edit.getByTestId('linked-tune')).toHaveText("Cooley's, setting 3");
+});
+
+/** The synth renderings in the audio cache (OPFS), by cache key. */
+async function cachedRenderings(page: Page): Promise<string[]> {
+	return page.evaluate(async () => {
+		const root = await navigator.storage.getDirectory();
+		const dir = await root.getDirectoryHandle('audio', { create: true });
+		const names: string[] = [];
+		for await (const [name] of dir as unknown as AsyncIterable<[string, unknown]>) {
+			const id = decodeURIComponent(name);
+			if (id.startsWith('synth:')) names.push(id);
+		}
+		return names;
+	});
+}
+
+/** Seamus Cooley's, a jig (not in the recorded fixtures): Cooley's data with one jig setting. */
+function seamusCooleys(): string {
+	const tune = JSON.parse(fixture('tune-1.json'));
+	return JSON.stringify({
+		...tune,
+		id: 414,
+		name: "Seamus Cooley's",
+		url: 'https://thesession.org/tunes/414',
+		type: 'jig',
+		settings: [
+			{
+				...tune.settings[0],
+				id: 41400,
+				url: 'https://thesession.org/tunes/414#setting41400',
+				key: 'Gmajor',
+				abc: '|:D|GAG GAB|ABA ABd|edd gdd|edB dBA|GAG GAB|ABA ABd|edd gdB|AGF G2:|'
+			}
+		]
+	});
+}
+
+test('previews play with the profile of the tune’s type tag, unless the piece’s own tags match first', async ({
+	page
+}, info) => {
+	test.setTimeout(90_000);
+	await mockTheSession(page, { '/tunes/414': seamusCooleys() });
+	await openAdd(page, info);
+	const results = await searchTheSession(page, 'cooley');
+
+	// A reel: the Reel profile (lilt even, accent +30, attack +10).
+	const reel = results.getByRole('button', { name: "Preview Cooley's" }).first();
+	await reel.click();
+	await expect(reel).toHaveAttribute('data-state', 'playing', { timeout: 20_000 });
+	await expect
+		.poll(() => cachedRenderings(page))
+		.toContainEqual(expect.stringMatching(/:s1:.*:melody:hr1,30,10@1\.00$/));
+	// A jig: the Jig profile (lilt 1.1).
+	const jig = results.getByRole('button', { name: "Preview Seamus Cooley's" });
+	await jig.click();
+	await expect(jig).toHaveAttribute('data-state', 'playing', { timeout: 20_000 });
+	await expect
+		.poll(() => cachedRenderings(page))
+		.toContainEqual(expect.stringMatching(/:s41400:.*:melody:hr1\.1,30,10@1\.00$/));
+	await picker(page).getByRole('button', { name: 'Close' }).click();
+
+	// Tagged "Old Time" first: Old Time comes before Reel in the profiles, so it wins.
+	const edit = page.getByRole('dialog', { name: 'New tune' });
+	const tags = edit.getByRole('combobox', { name: 'Tags' });
+	await tags.fill('Old Time');
+	await tags.press('Enter');
+	const again = await searchTheSession(page, 'cooley');
+	const oldTime = again.getByRole('button', { name: "Preview Cooley's" }).first();
+	await oldTime.click();
+	await expect(oldTime).toHaveAttribute('data-state', 'playing', { timeout: 20_000 });
+	await expect
+		.poll(() => cachedRenderings(page))
+		.toContainEqual(expect.stringMatching(/:s1:.*:melody:hr1\.5,-20,0@1\.00$/));
 });

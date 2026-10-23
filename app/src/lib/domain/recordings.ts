@@ -10,6 +10,7 @@ import { newId } from './id.ts';
 import { normalizeKey } from './key.ts';
 import { getPiece } from './ops.ts';
 import { compareOrder, orderAfter, orderBetween } from './order.ts';
+import { isInstrument } from './synth.ts';
 import type {
 	Clip,
 	ClipId,
@@ -235,6 +236,8 @@ export interface ClipPatch {
 	key?: string | null;
 	firstNotes?: string | null;
 	note?: string | null;
+	/** A synthesized recording's instrument override (an InstrumentId); null = its profile's. */
+	instrument?: string | null;
 }
 
 /** Seconds, to the millisecond. */
@@ -297,6 +300,8 @@ export function updateClip(
 		if (field in patch) set(field, clean(patch[field], field !== 'note'));
 	}
 	if ('key' in patch) set('key', patch.key ? normalizeKey(patch.key) : undefined);
+	if ('instrument' in patch)
+		set('instrument', isInstrument(patch.instrument) ? patch.instrument : undefined);
 
 	if (changed) piece.modifiedAt = now;
 	return changed;

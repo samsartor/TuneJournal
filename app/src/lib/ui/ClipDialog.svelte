@@ -13,9 +13,11 @@
 	import { formatKey } from '#lib/domain/key.ts';
 	import { PROVIDERS, openLinkOf, recordingTitle } from '#lib/domain/providers.ts';
 	import { relinkClip, updateClip, type ClipPatch } from '#lib/domain/recordings.ts';
-	import { synthTarget } from '#lib/domain/synth.ts';
+	import { profileFor } from '#lib/domain/playback.ts';
+	import { INSTRUMENTS, INSTRUMENT_IDS, isInstrument, synthTarget } from '#lib/domain/synth.ts';
 	import { tuneClipId } from '#lib/domain/thesession.ts';
 	import type { ClipId, PieceId } from '#lib/domain/types.ts';
+	import type { ResolvedPathname } from '$app/types';
 	import { detectLink } from '#lib/integrations/links.ts';
 	import { library } from '#lib/store/library.svelte.ts';
 	import { oembed } from '#lib/store/oembed.svelte.ts';
@@ -24,7 +26,6 @@
 	import KeyInput from './KeyInput.svelte';
 	import Notation from './Notation.svelte';
 	import ProviderIcon from './ProviderIcon.svelte';
-	import SynthOptions from './SynthOptions.svelte';
 	import TheSessionPicker from './TheSessionPicker.svelte';
 	import { sourceFromLink } from './recordings.ts';
 
@@ -78,6 +79,13 @@
 	const openHref = $derived(source ? openLinkOf(source) : undefined);
 	/** The setting this thesession link plays, synthesized. */
 	const synthOf = $derived(piece && source ? synthTarget(piece, source) : undefined);
+	/** The tag playback profile it plays with (only the instrument can be changed here). */
+	const profile = $derived(
+		synthOf && piece && library.doc ? profileFor(library.doc, piece) : undefined
+	);
+	const profileHref = $derived(
+		`${resolve('/settings')}${profile?.key ? `?profile=${encodeURIComponent(profile.key)}` : ''}#synth` as ResolvedPathname
+	);
 	let showNotation = $state(false);
 
 	// svelte-ignore state_referenced_locally
@@ -240,10 +248,33 @@
 					<div class="field" role="group" aria-labelledby="{uid}-synth">
 						<span class="label" id="{uid}-synth">♪ Synthesized playback</span>
 						<p class="muted small">
-							Plays this setting from its ABC, so it isn’t a real recording. These options apply on
-							this device.
+							Plays this setting from its ABC, so it isn’t a real recording.
 						</p>
-						<SynthOptions />
+						{#if profile}
+							<p data-testid="playback-profile">
+								Playback: {profile.label} profile ·
+								<a href={profileHref} onclick={() => dialog.close()}>Change in Settings</a>
+							</p>
+							<div class="field">
+								<label for="{uid}-instrument">Instrument</label>
+								<select
+									id="{uid}-instrument"
+									value={isInstrument(clip.instrument) ? clip.instrument : ''}
+									onchange={(e) => save({ instrument: e.currentTarget.value || null })}
+								>
+									<option value=""
+										>From profile ({INSTRUMENTS[
+											isInstrument(profile.settings.instrument)
+												? profile.settings.instrument
+												: 'fiddle'
+										].label})</option
+									>
+									{#each INSTRUMENT_IDS as id (id)}
+										<option value={id}>{INSTRUMENTS[id].label}</option>
+									{/each}
+								</select>
+							</div>
+						{/if}
 						<div class="buttons">
 							<button
 								type="button"

@@ -13,7 +13,7 @@
 <script lang="ts">
 	import { onDestroy, onMount, tick } from 'svelte';
 	import { formatRate } from '#lib/audio/bounds.ts';
-	import { preview } from '#lib/audio/preview.svelte.ts';
+	import { preview, type PreviewTarget } from '#lib/audio/preview.svelte.ts';
 	import { foldText } from '#lib/domain/derived.ts';
 	import { softDelete } from '#lib/domain/ops.ts';
 	import { mergePieces } from '#lib/domain/relations.ts';
@@ -22,6 +22,7 @@
 		applyTheSessionSetting,
 		linkTheSessionTune,
 		piecesWithTune,
+		tuneClipId,
 		tuneUrl,
 		typeTag
 	} from '#lib/domain/thesession.ts';
@@ -33,6 +34,7 @@
 		type TuneSetting
 	} from '#lib/integrations/thesession.ts';
 	import { library } from '#lib/store/library.svelte.ts';
+	import { synth } from '#lib/store/synth.svelte.ts';
 	import { loadErrorMessage, theSession } from '#lib/store/thesession.svelte.ts';
 	import Incipit from './Incipit.svelte';
 	import Scrubber from './Scrubber.svelte';
@@ -281,6 +283,17 @@
 	}
 
 	/** A tune's first setting, fetched (or read from the cache) when its preview is asked for. */
+	/**
+	 * A preview plays with the piece's playback profile, the tune's type tag ("Reel") counting as
+	 * one of its tags, as it will once linked; and with the instrument of the piece's link to this
+	 * tune, if it already has one with its own.
+	 */
+	function previewing(target: SynthTarget, type: string | undefined): PreviewTarget {
+		const tag = type ? typeTag(type) : undefined;
+		const clip = piece?.clips[tuneClipId(target.tuneId)];
+		return { ...target, options: synth.optionsFor(piece, clip, tag ? [tag] : []) };
+	}
+
 	async function firstSetting(tuneId: number): Promise<SynthTarget> {
 		const tune = await theSession.fetchTune(tuneId).catch((e) => {
 			throw new Error(loadErrorMessage(e), { cause: e });
@@ -295,7 +308,7 @@
 	key: string,
 	label: string,
 	title: string,
-	target: () => Promise<SynthTarget>
+	target: () => Promise<PreviewTarget>
 )}
 	{@const state = preview.state(key)}
 	<button
@@ -406,8 +419,11 @@
 										{/if}
 									{/if}
 								</button>
-								{@render previewButton(`tune:${hit.id}`, `Preview ${hit.name}`, hit.name, () =>
-									firstSetting(hit.id)
+								{@render previewButton(
+									`tune:${hit.id}`,
+									`Preview ${hit.name}`,
+									hit.name,
+									async () => previewing(await firstSetting(hit.id), hit.type)
 								)}
 								{@render previewError(`tune:${hit.id}`)}
 							</li>
@@ -490,7 +506,10 @@
 									`setting:${setting.id}`,
 									`Preview setting ${i + 1}`,
 									`Setting ${i + 1}`,
-									() => Promise.resolve({ tuneId: tune.id, settingId: setting.id })
+									() =>
+										Promise.resolve(
+											previewing({ tuneId: tune.id, settingId: setting.id }, tune.type)
+										)
 								)}
 								{@render previewError(`setting:${setting.id}`)}
 							</li>

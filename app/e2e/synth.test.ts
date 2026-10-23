@@ -2,7 +2,7 @@
 // abcjs rendering in the browser, with the self-hosted soundfont, through the mini-player, the
 // trim editor, Shuffle, and offline.
 
-import { expect, test, type Page, type Route, type TestInfo } from '@playwright/test';
+import { expect, test, type Locator, type Page, type Route, type TestInfo } from '@playwright/test';
 import { RELAY, backToList, card, open } from './helpers';
 import { wav } from './media';
 import { addCooleys, mockTheSession } from './thesession';
@@ -239,7 +239,28 @@ test('a thesession setting plays synthesized, with speed, loop and trim', async 
 	expect(stopped).toBeLessThan(23.1);
 });
 
-test('instrument, times through and notation', async ({ page }, info) => {
+/** Goes to Settings in the app (the player keeps what it has loaded), at the Synth section. */
+async function synthSettings(page: Page, info: TestInfo) {
+	await backToList(page, info);
+	await page.getByRole('link', { name: 'Settings' }).click();
+	const section = page.locator('section#synth');
+	await expect(section.getByRole('heading', { name: 'Synthesized playback' })).toBeVisible();
+	return section;
+}
+
+/** A profile chip's select button in Settings. */
+const chip = (section: Locator, tag: string) =>
+	section
+		.getByRole('list', { name: 'Current profiles' })
+		.getByRole('button', { name: tag, exact: true });
+
+/** The profile chips, in order. */
+const chipOrder = (section: Locator) =>
+	section.getByRole('list', { name: 'Current profiles' }).locator('.select').allTextContents();
+
+test('a recording can only override its instrument; times through come from its profile', async ({
+	page
+}, info) => {
 	test.setTimeout(90_000);
 	await addCooleysSetting(page, info);
 	const row = clip(page, 'thesession.org');
@@ -251,17 +272,19 @@ test('instrument, times through and notation', async ({ page }, info) => {
 	await row.getByRole('button', { name: /^Actions for/ }).click();
 	await page.getByRole('menuitem', { name: 'Edit…' }).click();
 	const edit = page.getByRole('dialog', { name: 'Edit recording' });
-	const options = edit.getByRole('group', { name: 'Synthesized playback' });
-	await expect(options.getByLabel('Instrument')).toHaveValue('fiddle');
-	await expect(options.getByLabel('Times through')).toHaveValue('2');
+	// The type tag thesession added picks the profile; only the instrument is offered here.
+	await expect(edit.getByTestId('playback-profile')).toContainText('Playback: Reel profile');
+	await expect(edit.getByLabel('Times through')).toHaveCount(0);
+	await expect(edit.getByLabel('Lilt')).toHaveCount(0);
+	const instrument = edit.getByLabel('Instrument');
+	await expect(instrument).toHaveValue('');
+	await expect(instrument.locator('option:checked')).toHaveText('From profile (Fiddle)');
 
-	// One time through: the loaded tune is re-rendered in place, half as long.
-	await options.getByLabel('Times through').selectOption('1');
-	await expect.poll(() => end(page), { timeout: 15_000 }).toBeLessThan(COOLEYS_SECONDS / 2 + 1);
-	expect(await end(page)).toBeGreaterThan(COOLEYS_SECONDS / 2 - 0.5);
-	// Another instrument, with chords on, renders too.
-	await options.getByLabel('Instrument').selectOption('whistle');
-	await options.getByLabel('Chord accompaniment').check();
+	// Another instrument for this recording: the loaded tune re-renders in place.
+	await instrument.selectOption('flute');
+	await expect
+		.poll(() => cachedRenderings(page), { timeout: 15_000 })
+		.toContainEqual(expect.stringMatching(/:flute:melody:hr1,30,10@1\.00$/));
 
 	// Notation, with the playing note highlighted.
 	await edit.getByRole('button', { name: 'Show notation' }).click();
@@ -272,14 +295,44 @@ test('instrument, times through and notation', async ({ page }, info) => {
 	await shot(page, info, 'synth-notation');
 	await edit.getByRole('button', { name: 'Done' }).click();
 	await expect(edit).toBeHidden();
-	await expect(bar).toHaveAttribute('data-playing', 'false');
 
-	// The options are this device's, kept across reloads.
-	await page.goto('/settings');
-	const settings = page.getByRole('group', { name: 'Synthesized playback' });
-	await expect(settings.getByLabel('Instrument')).toHaveValue('whistle');
-	await expect(settings.getByLabel('Times through')).toHaveValue('1');
-	await expect(settings.getByLabel('Chord accompaniment')).toBeChecked();
+	// Kept on the clip (synced), and back to the profile's when unset.
+	await page.reload();
+	await row.getByRole('button', { name: /^Actions for/ }).click();
+	await page.getByRole('menuitem', { name: 'Edit…' }).click();
+	await expect(edit.getByLabel('Instrument')).toHaveValue('flute');
+	await edit.getByLabel('Instrument').selectOption('');
+	await expect(edit.getByLabel('Instrument')).toHaveValue('');
+	await edit.getByRole('button', { name: 'Done' }).click();
+	await row.getByRole('button', { name: 'Play thesession.org' }).click();
+	await expect(bar).toHaveAttribute('data-playing', 'true', { timeout: 20_000 });
+	await bar.getByRole('button', { name: 'Pause' }).click();
+	expect(await end(page)).toBeGreaterThan(COOLEYS_SECONDS - 0.5);
+	await row.getByRole('button', { name: /^Actions for/ }).click();
+	await page.getByRole('menuitem', { name: 'Edit…' }).click();
+
+	// "Change in Settings" opens the Reel profile there. One time through: the loaded tune is
+	// re-rendered in place, half as long.
+	await edit.getByRole('link', { name: 'Change in Settings' }).click();
+	const section = page.locator('section#synth');
+	await expect(chip(section, 'Reel')).toHaveAttribute('aria-pressed', 'true');
+	const reel = section.getByRole('group', { name: 'Reel profile' });
+	await expect(reel.getByLabel('Instrument')).toHaveValue('fiddle');
+	await reel.getByLabel('Times through').selectOption('1');
+	await expect.poll(() => end(page), { timeout: 15_000 }).toBeLessThan(COOLEYS_SECONDS / 2 + 1);
+	expect(await end(page)).toBeGreaterThan(COOLEYS_SECONDS / 2 - 0.5);
+	await reel.getByLabel('Chord accompaniment').check();
+
+	// Synced library settings: kept across reloads.
+	await page.reload();
+	await chip(section, 'Reel').click();
+	await expect(reel.getByLabel('Times through')).toHaveValue('1');
+	await expect(reel.getByLabel('Chord accompaniment')).toBeChecked();
+	// Other profiles keep theirs.
+	await chip(section, 'Jig').click();
+	await expect(
+		section.getByRole('group', { name: 'Jig profile' }).getByLabel('Times through')
+	).toHaveValue('2');
 });
 
 test('Shuffle plays a synthesized setting', async ({ page }, info) => {
@@ -396,78 +449,145 @@ test('offline, a tune never loaded on this device opens thesession.org instead',
 	await expect(row.getByTestId('synth-badge')).toBeVisible();
 });
 
-test('humanization: lilt, accent and attack change the rendering', async ({ page }, info) => {
-	test.setTimeout(90_000);
+test('profiles: tags, order, and a profile’s feel changes how a tagged tune renders', async ({
+	page
+}, info) => {
+	test.setTimeout(120_000);
 	await addCooleysSetting(page, info);
 	const row = clip(page, 'thesession.org');
 	await row.getByRole('button', { name: 'Play thesession.org' }).click();
 	const bar = player(page);
 	await expect(bar).toHaveAttribute('data-playing', 'true', { timeout: 20_000 });
 	await bar.getByRole('button', { name: 'Pause' }).click();
-	// The default feel is on: its own rendering, keyed by its settings.
-	const humanized = /:h20,20,15@1\.00$/;
-	await expect.poll(() => cachedRenderings(page)).toContainEqual(expect.stringMatching(humanized));
+	// Tagged Reel by thesession: the Reel profile's feel, keyed by its settings.
+	const reelKey = /:melody:hr1,30,10@1\.00$/;
+	await expect.poll(() => cachedRenderings(page)).toContainEqual(expect.stringMatching(reelKey));
 
-	await row.getByRole('button', { name: /^Actions for/ }).click();
-	await page.getByRole('menuitem', { name: 'Edit…' }).click();
-	const edit = page.getByRole('dialog', { name: 'Edit recording' });
-	const options = edit.getByRole('group', { name: 'Synthesized playback' });
-	await expect(options.getByLabel('Style')).toHaveValue('irish');
-	await expect(options.getByLabel('Lilt')).toHaveValue('20');
-	await expect(options.locator('output').first()).toHaveText('1.14:1');
+	const section = await synthSettings(page, info);
+	expect(await chipOrder(section)).toEqual(['Old Time', 'Reel', 'Jig', 'Default']);
+	// Default is selected first, and can't be removed.
+	await expect(chip(section, 'Default')).toHaveAttribute('aria-pressed', 'true');
+	await expect(section.getByRole('button', { name: 'Remove tag Default' })).toHaveCount(0);
+	await expect(
+		section.getByRole('group', { name: 'Default profile' }).getByLabel('Lilt')
+	).toHaveAttribute('aria-valuetext', 'Even');
 
-	// As written: the plain rendering, with the key it had before humanization existed.
-	await options.getByRole('button', { name: 'As written' }).click();
-	await expect(options.getByLabel('Accent')).toHaveValue('0');
+	// The Reel profile: as written gives the plain rendering, with the key it always had.
+	await chip(section, 'Reel').click();
+	const reel = section.getByRole('group', { name: 'Reel profile' });
+	await expect(reel.getByLabel('Accent')).toHaveValue('30');
+	await expect(reel.getByLabel('Lilt')).toHaveAttribute('aria-valuetext', 'Even');
+	await reel.getByRole('button', { name: 'As written' }).click();
+	await expect(reel.getByLabel('Accent')).toHaveValue('0');
 	const plainKey = /:melody@1\.00$/;
 	await expect
 		.poll(() => cachedRenderings(page), { timeout: 15_000 })
 		.toContainEqual(expect.stringMatching(plainKey));
 	const plain = await renderedAudio(page, plainKey);
-	const defaults = await renderedAudio(page, humanized);
-	expect(defaults.checksum).not.toBe(plain.checksum);
-	// Bar lines don't move, so the tune is just as long.
-	expect(defaults.duration).toBeCloseTo(plain.duration, 3);
+	const accented = await renderedAudio(page, reelKey);
+	expect(accented.checksum).not.toBe(plain.checksum);
+	expect(accented.duration).toBeCloseTo(plain.duration, 3);
 	// Played as written, the off-beat quaver starts a quaver (0.15 s) after the beat.
 	expect(plain.offBeat).toBeGreaterThan(0.13);
 	expect(plain.offBeat).toBeLessThan(0.165);
 
-	// A strong lilt: 80 makes the pairs about 1.73:1, so the off-beat starts ~40 ms later.
-	await options.getByLabel('Lilt').fill('80');
-	await expect(options.locator('output').first()).toHaveText('1.73:1');
-	const lilted = /:h80,0,0@1\.00$/;
+	// A 2:1 lilt (the slider's last notch): the off-beat starts 50 ms later; bar lines don't move.
+	const lilt = reel.getByLabel('Lilt');
+	await lilt.fill((await lilt.getAttribute('max')) as string);
+	await expect(reel.locator('output').first()).toHaveText('2:1');
+	const lilted = /:melody:hr2,0,0@1\.00$/;
 	await expect
 		.poll(() => cachedRenderings(page), { timeout: 15_000 })
 		.toContainEqual(expect.stringMatching(lilted));
-	const lilt = await renderedAudio(page, lilted);
-	expect(lilt.offBeat - plain.offBeat).toBeGreaterThan(0.025);
-	expect(lilt.offBeat - plain.offBeat).toBeLessThan(0.06);
-	expect(lilt.duration).toBeCloseTo(plain.duration, 3);
-	// …and a negative one, the reverse.
-	await options.getByLabel('Lilt').fill('-80');
-	const reversed = /:h-80,0,0@1\.00$/;
+	const swung = await renderedAudio(page, lilted);
+	expect(swung.offBeat - plain.offBeat).toBeGreaterThan(0.03);
+	expect(swung.offBeat - plain.offBeat).toBeLessThan(0.07);
+	expect(swung.duration).toBeCloseTo(plain.duration, 3);
+	// …and below Even (1:2), the reverse.
+	await lilt.fill('0');
+	await expect(reel.locator('output').first()).toHaveText('1:2');
+	const reversed = /:melody:hr0\.5,0,0@1\.00$/;
 	await expect
 		.poll(() => cachedRenderings(page), { timeout: 15_000 })
 		.toContainEqual(expect.stringMatching(reversed));
-	expect((await renderedAudio(page, reversed)).offBeat - plain.offBeat).toBeLessThan(-0.025);
+	expect((await renderedAudio(page, reversed)).offBeat - plain.offBeat).toBeLessThan(-0.03);
+	await shot(page, info, 'synth-profiles');
+	// "Default" goes back to the Reel's seeded feel.
+	await reel.getByRole('button', { name: 'Default' }).click();
+	await expect(reel.getByLabel('Accent')).toHaveValue('30');
+	await expect(reel.getByLabel('Attack')).toHaveValue('10');
+	await expect(lilt).toHaveAttribute('aria-valuetext', 'Even');
 
-	// Old-time, with some accent: another rendering.
-	await options.getByLabel('Style').selectOption('oldtime');
-	await options.getByLabel('Accent').fill('50');
+	// Old Time comes first: tagging the reel "Old Time" plays it old-time.
+	await page.getByRole('link', { name: '← All pieces' }).click();
+	await card(page, "Cooley's").getByRole('link', { name: "Cooley's" }).click();
+	await page.getByRole('button', { name: 'Edit', exact: true }).click();
+	const edit = page.getByRole('dialog', { name: /Edit/ });
+	const tags = edit.getByRole('combobox', { name: 'Tags' });
+	await tags.fill('Old Time');
+	await tags.press('Enter');
+	await edit.getByRole('button', { name: 'Done' }).click();
 	await expect
 		.poll(() => cachedRenderings(page), { timeout: 15_000 })
-		.toContainEqual(expect.stringMatching(/:h-80,50,0o@1\.00$/));
-	await shot(page, info, 'synth-humanize');
-	await edit.getByRole('button', { name: 'Done' }).click();
+		.toContainEqual(expect.stringMatching(/:melody:hr1\.5,-20,0@1\.00$/));
 
-	// This device's, kept across reloads, and in Settings too.
-	await page.goto('/settings');
-	const settings = page.getByRole('group', { name: 'Synthesized playback' });
-	await expect(settings.getByLabel('Style')).toHaveValue('oldtime');
-	await expect(settings.getByLabel('Lilt')).toHaveValue('-80');
-	await expect(settings.getByLabel('Accent')).toHaveValue('50');
-	await settings.getByRole('button', { name: 'Default' }).click();
-	await expect(settings.getByLabel('Lilt')).toHaveValue('20');
-	await expect(settings.getByLabel('Attack')).toHaveValue('15');
-	await expect(settings.getByLabel('Style')).toHaveValue('oldtime');
+	// Reordered, Reel before Old Time, it plays as a Reel again.
+	const again = await synthSettings(page, info);
+	await chip(again, 'Reel').click();
+	await again.getByRole('button', { name: '‹ Earlier' }).click();
+	await expect.poll(() => chipOrder(again)).toEqual(['Reel', 'Old Time', 'Jig', 'Default']);
+	await expect(again.getByRole('button', { name: '‹ Earlier' })).toBeDisabled();
+	await expect
+		.poll(async () => (await cachedRenderings(page)).filter((k) => reelKey.test(k)).length, {
+			timeout: 15_000
+		})
+		.toBeGreaterThan(0);
+	expect(await bar.getAttribute('data-kind')).toBe('synth');
+});
+
+test('profiles: adding and removing a tag, with undo', async ({ page }) => {
+	await page.getByRole('link', { name: 'Settings' }).click();
+	const section = page.locator('section#synth');
+	const input = section.getByRole('combobox', { name: 'Profiles' });
+	await input.fill('Hornpipe');
+	await input.press('Enter');
+	await expect
+		.poll(() => chipOrder(section))
+		.toEqual(['Old Time', 'Reel', 'Jig', 'Hornpipe', 'Default']);
+	// The new one is selected, as written, on the Default's instrument.
+	await expect(chip(section, 'Hornpipe')).toHaveAttribute('aria-pressed', 'true');
+	const hornpipe = section.getByRole('group', { name: 'Hornpipe profile' });
+	await expect(hornpipe.getByLabel('Accent')).toHaveValue('0');
+	await hornpipe.getByLabel('Accent').fill('40');
+	await expect(hornpipe.locator('output').nth(1)).toHaveText('+40');
+	// Adding "Default", or a tag twice, adds nothing.
+	await input.fill('default');
+	await input.press('Enter');
+	await input.fill('reel');
+	await input.press('Enter');
+	await expect
+		.poll(() => chipOrder(section))
+		.toEqual(['Old Time', 'Reel', 'Jig', 'Hornpipe', 'Default']);
+	await expect(chip(section, 'Reel')).toHaveAttribute('aria-pressed', 'true');
+
+	// Removing one, with undo.
+	await section.getByRole('button', { name: 'Remove tag Jig' }).click();
+	await expect.poll(() => chipOrder(section)).toEqual(['Old Time', 'Reel', 'Hornpipe', 'Default']);
+	await page.getByRole('button', { name: 'Undo' }).click();
+	await expect
+		.poll(() => chipOrder(section))
+		.toEqual(['Old Time', 'Reel', 'Jig', 'Hornpipe', 'Default']);
+	await section.getByRole('button', { name: 'Remove tag Old Time' }).click();
+	await expect.poll(() => chipOrder(section)).toEqual(['Reel', 'Jig', 'Hornpipe', 'Default']);
+
+	// Later moves one down; kept across reloads (it's in the synced library).
+	await chip(section, 'Reel').click();
+	await section.getByRole('button', { name: 'Later ›' }).click();
+	await expect.poll(() => chipOrder(section)).toEqual(['Jig', 'Reel', 'Hornpipe', 'Default']);
+	await page.reload();
+	await expect.poll(() => chipOrder(section)).toEqual(['Jig', 'Reel', 'Hornpipe', 'Default']);
+	await chip(section, 'Hornpipe').click();
+	await expect(
+		section.getByRole('group', { name: 'Hornpipe profile' }).getByLabel('Accent')
+	).toHaveValue('40');
 });

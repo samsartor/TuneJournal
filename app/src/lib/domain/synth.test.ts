@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { HUMANIZE_DEFAULTS, HUMANIZE_OFF } from './humanize';
+import { HUMANIZE_OFF } from './humanize';
 import { clipPlayback } from './providers';
 import {
 	DEFAULT_SYNTH_OPTIONS,
@@ -11,7 +11,6 @@ import {
 	foldPitch,
 	hashText,
 	isSynthCacheKey,
-	normalizeSynthOptions,
 	parseTempo,
 	renderRequest,
 	secondsPerWhole,
@@ -131,7 +130,7 @@ describe('render requests and the audio cache key', () => {
 			chords: false,
 			transpose: 0,
 			timesThrough: 2,
-			humanize: HUMANIZE_DEFAULTS
+			humanize: HUMANIZE_OFF
 		});
 	});
 
@@ -142,15 +141,17 @@ describe('render requests and the audio cache key', () => {
 		const key = at(1, plain);
 		// Without humanization, the key renderings had before it existed.
 		expect(key).toMatch(/^synth:v\d+:s1:[0-9a-f]{8}:fiddle:melody@1\.00$/);
-		expect(at(1, { ...plain, humanize: { ...HUMANIZE_OFF, style: 'oldtime' } })).toBe(key);
+		// The default options are as written.
+		expect(at(1)).toBe(key);
 		// With it, a part per setting, so each slider position is its own rendering.
-		expect(at(1)).toBe(key.replace('@', ':h20,20,15@'));
 		const human = (h: Partial<typeof HUMANIZE_OFF>) =>
 			at(1, { ...plain, humanize: { ...HUMANIZE_OFF, ...h } });
-		expect(human({ lilt: 25 })).toContain(':h25,0,0@');
-		expect(human({ accent: -10 })).toContain(':h0,-10,0@');
-		expect(human({ attack: 5, style: 'oldtime' })).toContain(':h0,0,5o@');
-		expect(new Set([human({ lilt: 25 }), human({ lilt: 30 }), human({ accent: 25 })]).size).toBe(3);
+		expect(human({ lilt: 1.5, accent: -20 })).toBe(key.replace('@', ':hr1.5,-20,0@'));
+		expect(human({ accent: 30, attack: 10 })).toContain(':hr1,30,10@');
+		expect(human({ lilt: 0.8 })).toContain(':hr0.8,0,0@');
+		expect(new Set([human({ lilt: 1.1 }), human({ lilt: 1.15 }), human({ accent: 25 })]).size).toBe(
+			3
+		);
 		expect(isSynthCacheKey(key)).toBe(true);
 		expect(isSynthCacheKey('upload-id')).toBe(false);
 		expect(at(0.75, plain)).toBe(key.replace('@1.00', '@0.75'));
@@ -187,22 +188,6 @@ describe('instruments and options', () => {
 		expect(foldPitch(40, [55, 88])).toBe(64);
 		expect(foldPitch(100, [55, 88])).toBe(88);
 		expect(foldPitch(101, [55, 88])).toBe(77);
-	});
-
-	it('normalizes stored options', () => {
-		expect(normalizeSynthOptions(undefined)).toEqual(DEFAULT_SYNTH_OPTIONS);
-		expect(normalizeSynthOptions({ instrument: 'banjo', timesThrough: 9, chords: 'yes' })).toEqual(
-			DEFAULT_SYNTH_OPTIONS
-		);
-		expect(normalizeSynthOptions({ instrument: 'flute', timesThrough: 3, chords: true })).toEqual({
-			instrument: 'flute',
-			timesThrough: 3,
-			chords: true,
-			humanize: HUMANIZE_DEFAULTS
-		});
-		const humanize = { style: 'oldtime', lilt: -40, accent: 0, attack: 10 };
-		expect(normalizeSynthOptions({ humanize }).humanize).toEqual(humanize);
-		expect(DEFAULT_SYNTH_OPTIONS.timesThrough).toBe(2);
 	});
 });
 

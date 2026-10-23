@@ -8,7 +8,11 @@
 		onadd,
 		onremove,
 		id = 'tags',
-		label = 'Tags'
+		label = 'Tags',
+		fixed = [],
+		selected,
+		onselect,
+		placeholder = 'Add a tag…'
 	}: {
 		tags: string[];
 		/** Library tags, most used first. */
@@ -17,6 +21,12 @@
 		onremove: (tag: string) => void;
 		id?: string;
 		label?: string;
+		/** Chips shown after `tags` that can't be removed (or added again): the profiles' "Default". */
+		fixed?: string[];
+		/** With `onselect`, chips are buttons that select one (`selected`, compared with tagKey). */
+		selected?: string;
+		onselect?: (tag: string) => void;
+		placeholder?: string;
 	} = $props();
 
 	const MAX_OPTIONS = 8;
@@ -31,7 +41,7 @@
 	const options = $derived.by((): Option[] => {
 		const typed = text.trim().replace(/\s+/g, ' ');
 		const key = tagKey(typed);
-		const have = new Set(tags.map(tagKey));
+		const have = new Set([...tags, ...fixed].map(tagKey));
 		const matches: Option[] = suggestions
 			.filter((s) => !have.has(tagKey(s.tag)) && tagKey(s.tag).includes(key))
 			.slice(0, MAX_OPTIONS)
@@ -43,6 +53,8 @@
 
 	const listId = $derived(`${id}-options`);
 	const expanded = $derived(open && options.length > 0);
+
+	const isSelected = (tag: string) => selected !== undefined && tagKey(selected) === tagKey(tag);
 
 	function accept(option: Option | undefined) {
 		const tag = option?.tag ?? text.trim();
@@ -87,14 +99,27 @@
 	}
 </script>
 
+{#snippet name(tag: string)}
+	{#if onselect}
+		<button
+			type="button"
+			class="select"
+			aria-pressed={isSelected(tag)}
+			onclick={() => onselect(tag)}>{tag}</button
+		>
+	{:else}
+		{tag}
+	{/if}
+{/snippet}
+
 <div class="tag-input">
 	<label for={id}>{label}</label>
 	<div class="box">
-		{#if tags.length > 0}
+		{#if tags.length + fixed.length > 0}
 			<ul class="chips" aria-label="Current {label.toLowerCase()}">
 				{#each tags as tag (tag)}
-					<li class="chip">
-						{tag}
+					<li class="chip" class:selected={isSelected(tag)}>
+						{@render name(tag)}
 						<button
 							type="button"
 							class="remove"
@@ -105,6 +130,9 @@
 							}}>×</button
 						>
 					</li>
+				{/each}
+				{#each fixed as tag (tag)}
+					<li class="chip fixed" class:selected={isSelected(tag)}>{@render name(tag)}</li>
 				{/each}
 			</ul>
 		{/if}
@@ -117,7 +145,7 @@
 			autocomplete="off"
 			autocapitalize="off"
 			enterkeyhint="done"
-			placeholder="Add a tag…"
+			{placeholder}
 			aria-autocomplete="list"
 			aria-expanded={expanded}
 			aria-controls={listId}
@@ -186,6 +214,27 @@
 
 	.chip {
 		padding-right: 0;
+	}
+
+	.chip.selected {
+		background: var(--color-accent);
+		color: var(--color-on-accent);
+	}
+
+	.chip.selected .remove {
+		color: inherit;
+	}
+
+	.chip.fixed {
+		padding-right: 0.6rem;
+	}
+
+	.select {
+		min-height: 2rem;
+		padding: 0;
+		background: transparent;
+		color: inherit;
+		font: inherit;
 	}
 
 	.remove {

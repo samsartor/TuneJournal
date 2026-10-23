@@ -45,7 +45,7 @@
 			const target = kind === 'synth' && piece && source ? synthTarget(piece, source) : undefined;
 			if (target) {
 				// The 100% rendering: its seconds are tune time, which the trim is kept in.
-				blob = await synth.render(target, 1).catch((e) => {
+				blob = await synth.render(target, synth.optionsFor(piece, clip), 1).catch((e) => {
 					console.warn('No waveform', e);
 					return undefined;
 				});

@@ -70,6 +70,11 @@ export interface Clip {
 	/** Overrides piece.firstNotes. */
 	firstNotes?: string;
 	note?: string;
+	/**
+	 * A synthesized thesession recording only: play it on this instrument (an InstrumentId,
+	 * domain/synth.ts) instead of its playback profile's. Absent = the profile's.
+	 */
+	instrument?: string;
 	addedAt: Timestamp;
 }
 
@@ -126,6 +131,37 @@ export interface Settings {
 		respectListFilter?: boolean;
 	};
 	list: ListSettings;
+	/** Synthesized playback, per tag (domain/playback.ts). Absent only in docs before schema 2. */
+	playback?: PlaybackSettings;
+}
+
+/** How synthesized tunes play (PLAN.md §5, §14 "Tag playback profiles"). */
+export interface PlaybackSettings {
+	/** For pieces no profile's tag matches. Always there; shown last as "Default". */
+	default: PlaybackProfileSettings;
+	/** Keyed by `tagKey(tag)`, so the same tag added on two devices merges into one profile. */
+	profiles: Record<string, PlaybackProfile>;
+}
+
+/** Flat fields, so concurrent edits to different ones merge. */
+export interface PlaybackProfileSettings {
+	/** An InstrumentId (domain/synth.ts). */
+	instrument: string;
+	timesThrough: number;
+	chords: boolean;
+	/** Long:short ratio of the strong quaver to the others in its group; 1 = even. */
+	lilt: number;
+	/** −100 to 100. */
+	accent: number;
+	/** −100 to 100. */
+	attack: number;
+}
+
+export interface PlaybackProfile extends PlaybackProfileSettings {
+	/** The tag as typed, for display; matched case-insensitively (its key is `tagKey(tag)`). */
+	tag: string;
+	/** Fractional index: the first profile in order whose tag a piece has wins. */
+	order: string;
 }
 
 /**

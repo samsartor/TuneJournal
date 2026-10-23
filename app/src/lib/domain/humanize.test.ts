@@ -1,13 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import {
 	ATTACK_SECONDS,
-	HUMANIZE_DEFAULTS,
 	HUMANIZE_OFF,
+	LILT_NOTCHES,
 	beatGroups,
 	humanizeKey,
 	humanizeNotes,
 	isHumanizeOff,
-	liltRatio,
+	clampLilt,
+	formatLilt,
+	liltNotch,
 	liltWarp,
 	meterGrid,
 	normalizeHumanize,
@@ -33,13 +35,10 @@ const pattern = (
 	total: number,
 	from: number,
 	count: number,
-	style: 'irish' | 'oldtime' = 'irish',
 	copies = 1
 ) => {
 	const groups = beatGroups(starts, total, g, copies);
-	return Array.from({ length: count }, (_, i) => stressAt(groups, g, style, from + i * E)[0]).join(
-		''
-	);
+	return Array.from({ length: count }, (_, i) => stressAt(groups, g, from + i * E)[0]).join('');
 };
 
 describe('beat grid', () => {
@@ -82,13 +81,6 @@ describe('beat grid', () => {
 		expect(pattern(grid(12, 8), slide.starts, slide.total, 0, 12)).toBe('swwswwswwsww');
 	});
 
-	it('puts old-time accents on the last quaver of each group', () => {
-		const { starts, total } = bars(1, 1);
-		expect(pattern(grid(4, 4), starts, total, 0, 8, 'oldtime')).toBe('wswswsws');
-		const jig = bars(1, 6 / 8);
-		expect(pattern(grid(6, 8), jig.starts, jig.total, 0, 6, 'oldtime')).toBe('wwswws');
-	});
-
 	it('counts a pickup back from the bar line', () => {
 		// One quaver pickup in a reel: the 8th quaver of a bar, weak. Then the bar starts strong.
 		const reel = bars(2, 1, E);
@@ -107,9 +99,9 @@ describe('beat grid', () => {
 		const total1 = E + 12 / 8;
 		const starts = [...once, total1, ...once.slice(1).map((t) => t + total1)];
 		const total = 2 * total1;
-		expect(pattern(grid(6, 8), starts, total, total1, 4, 'irish', 2)).toBe('wsww');
+		expect(pattern(grid(6, 8), starts, total, total1, 4, 2)).toBe('wsww');
 		// Without knowing the times through, the second pickup counts as a short bar: from its start.
-		expect(pattern(grid(6, 8), starts, total, total1, 4, 'irish', 1)).toBe('ssww');
+		expect(pattern(grid(6, 8), starts, total, total1, 4, 1)).toBe('ssww');
 		// A shortened last bar of a part (5 quavers), then its pickup repeated (1): one bar between them.
 		const split = [0, E, E + 6 / 8, E + 6 / 8 + 5 * E, E + 12 / 8];
 		const splitTotal = E + 12 / 8 + 6 / 8;
@@ -131,37 +123,79 @@ describe('lilt', () => {
 	const groups = beatGroups(starts, total, g);
 
 	it('keeps group boundaries and bar lines where they are', () => {
-		const warp = liltWarp(groups, g, 60);
+		const warp = liltWarp(groups, g, 1.5);
 		for (let t = 0; t <= total; t += 2 * E) expect(warp(t)).toBeCloseTo(t, 9);
 		const jig = grid(6, 8);
 		const jigBars = bars(2, 6 / 8, E);
-		const jigWarp = liltWarp(beatGroups(jigBars.starts, jigBars.total, jig), jig, -80);
+		const jigWarp = liltWarp(beatGroups(jigBars.starts, jigBars.total, jig), jig, 0.6);
 		for (let t = E; t <= jigBars.total; t += 3 * E) expect(jigWarp(t)).toBeCloseTo(t, 9);
 	});
 
-	it('lengthens the strong quaver and shortens the rest, monotonically', () => {
-		const warp = liltWarp(groups, g, 100);
-		// 2:1 at 100.
+	it('makes the strong quaver `ratio` times each of the others, monotonically', () => {
+		const warp = liltWarp(groups, g, 2);
+		// 2:1 pairs in a reel.
 		expect(warp(E)).toBeCloseTo((4 / 3) * E, 9);
-		expect(liltRatio(100)).toBe('2.00:1');
-		expect(liltRatio(HUMANIZE_DEFAULTS.lilt)).toBe('1.14:1');
-		let last = -1;
-		for (let t = 0; t <= total; t += 1 / 96) {
-			const w = warp(t);
-			expect(w).toBeGreaterThanOrEqual(last);
-			last = w;
+		expect(warp(2 * E) - warp(E)).toBeCloseTo((2 / 3) * E, 9);
+		// 1.5:1: the first quaver 1.2 quavers long, the second 0.8.
+		expect(liltWarp(groups, g, 1.5)(E)).toBeCloseTo(1.2 * E, 9);
+		for (const ratio of [0.5, 0.8, 1.1, 1.5, 2]) {
+			let last = -1;
+			const w = liltWarp(groups, g, ratio);
+			for (let t = 0; t <= total; t += 1 / 96) {
+				expect(w(t)).toBeGreaterThanOrEqual(last);
+				last = w(t);
+			}
 		}
 	});
 
-	it('reverses with a negative lilt', () => {
-		const warp = liltWarp(groups, g, -100);
+	it('in a jig, sets the first quaver against each of the other two', () => {
+		const jig = grid(6, 8);
+		const b = bars(2, 6 / 8);
+		const warp = liltWarp(beatGroups(b.starts, b.total, jig), jig, 1.1);
+		const first = warp(E);
+		const second = warp(2 * E) - first;
+		const third = warp(3 * E) - warp(2 * E);
+		expect(first / second).toBeCloseTo(1.1, 9);
+		expect(second).toBeCloseTo(third, 9);
+		expect(warp(3 * E)).toBeCloseTo(3 * E, 9);
+	});
+
+	it('is the identity at 1 (Even)', () => {
+		const warp = liltWarp(groups, g, 1);
+		for (let t = 0; t <= total; t += 1 / 48) expect(warp(t)).toBe(t);
+	});
+
+	it('reverses below 1', () => {
+		const warp = liltWarp(groups, g, 0.5);
 		expect(warp(E)).toBeCloseTo((2 / 3) * E, 9);
-		expect(liltRatio(-100)).toBe('1:2.00');
 		expect(warp(1 + E)).toBeLessThan(1 + E);
+		expect(formatLilt(0.5)).toBe('1:2');
+		expect(formatLilt(1 / 1.5)).toBe('1:1.5');
+	});
+
+	it('formats, clamps and notches the ratio', () => {
+		expect(formatLilt(1)).toBe('Even');
+		expect(formatLilt(1.5)).toBe('1.5:1');
+		expect(formatLilt(1.33)).toBe('1.33:1');
+		expect(clampLilt(5)).toBe(2);
+		expect(clampLilt(0.1)).toBe(0.5);
+		expect(clampLilt('x')).toBe(1);
+		expect(clampLilt(-1)).toBe(1);
+		// Symmetric notches on a log scale, Even in the middle.
+		const mid = (LILT_NOTCHES.length - 1) / 2;
+		expect(LILT_NOTCHES[mid]).toBe(1);
+		expect(LILT_NOTCHES[0]).toBe(0.5);
+		expect(LILT_NOTCHES.at(-1)).toBe(2);
+		for (let i = 1; i < LILT_NOTCHES.length; i++)
+			expect(LILT_NOTCHES[i]).toBeGreaterThan(LILT_NOTCHES[i - 1]);
+		expect(LILT_NOTCHES[liltNotch(1.5)]).toBe(1.5);
+		expect(LILT_NOTCHES[liltNotch(1.1)]).toBe(1.1);
+		expect(liltNotch(1)).toBe(mid);
+		expect(LILT_NOTCHES[liltNotch(1.52)]).toBe(1.5);
 	});
 
 	it('scales triplets and notes between grid lines consistently', () => {
-		const warp = liltWarp(groups, g, 50);
+		const warp = liltWarp(groups, g, 1.4);
 		// A triplet of quavers over a crotchet: still in order, still ending on the next group.
 		const triplet = [0, 1 / 12, 2 / 12, 3 / 12].map(warp);
 		expect(triplet[3]).toBeCloseTo(0.25, 9);
@@ -172,7 +206,7 @@ describe('lilt', () => {
 	it('leaves a pickup’s partial group alone', () => {
 		const jig = grid(6, 8);
 		const b = bars(2, 6 / 8, 2 * E);
-		const warp = liltWarp(beatGroups(b.starts, b.total, jig), jig, 100);
+		const warp = liltWarp(beatGroups(b.starts, b.total, jig), jig, 2);
 		expect(warp(E)).toBe(E);
 		expect(warp(2 * E + E)).toBeGreaterThan(3 * E);
 	});
@@ -204,7 +238,7 @@ describe('humanizing notes', () => {
 		const tracks = [reelTrack()];
 		expect(humanizeNotes(input(tracks, HUMANIZE_OFF))).toEqual([]);
 		expect(tracks).toEqual([reelTrack()]);
-		expect(humanizeNotes(input(tracks, { lilt: 50, accent: 50, attack: 50 }, 7, 8))).toEqual([]);
+		expect(humanizeNotes(input(tracks, { lilt: 1.4, accent: 50, attack: 50 }, 7, 8))).toEqual([]);
 		expect(tracks).toEqual([reelTrack()]);
 	});
 
@@ -220,11 +254,6 @@ describe('humanizing notes', () => {
 		humanizeNotes(input(neg, { accent: -40 }));
 		expect(neg[0][2].volume).toBe(72);
 		expect(neg[0][3].volume).toBe(108);
-		// Old-time: on the off-beat quavers.
-		const old = [reelTrack()];
-		humanizeNotes(input(old, { accent: 40, style: 'oldtime' }));
-		expect(old[0][2].volume).toBe(72);
-		expect(old[0][3].volume).toBe(108);
 		// In a jig, two weak quavers for each strong one.
 		const jig: NoteEvent[][] = [
 			[0, 1, 2].map((i) => ({ cmd: 'note', start: i * E, duration: E, volume: 90 }))
@@ -250,7 +279,7 @@ describe('humanizing notes', () => {
 			{ cmd: 'note', start: 0.25, duration: 0.25, volume: 70 },
 			{ cmd: 'note', start: 0.375, duration: E, volume: 70 }
 		];
-		humanizeNotes(input([melody, bass], { lilt: 100 }));
+		humanizeNotes(input([melody, bass], { lilt: 2 }));
 		// Strong quaver: same start, 4/3 as long; the weak one after it starts later, 2/3 as long.
 		expect(melody[2]).toMatchObject({ start: 0.25 });
 		expect(melody[2].duration).toBeCloseTo(E * (4 / 3), 5);
@@ -265,12 +294,11 @@ describe('humanizing notes', () => {
 
 	it('returns the strong onsets, after the lilt, for the attack', () => {
 		const tracks = [reelTrack()];
-		expect(humanizeNotes(input(tracks, { lilt: 50, accent: 0 }))).toEqual([]);
-		const onsets = humanizeNotes(input([reelTrack()], { lilt: 50, attack: 30 }));
+		expect(humanizeNotes(input(tracks, { lilt: 1.4, accent: 0 }))).toEqual([]);
+		const onsets = humanizeNotes(input([reelTrack()], { lilt: 1.4, attack: 30 }));
 		expect(onsets).toEqual([0, 0.25, 0.5, 0.75, 1]);
-		const old = humanizeNotes(input([reelTrack()], { lilt: 100, attack: 30, style: 'oldtime' }));
-		expect(old[0]).toBeCloseTo(0.25 + E * (4 / 3), 5);
-		expect(old).toHaveLength(4);
+		// A negative attack still shapes the strong onsets (fading them in), never the others.
+		expect(humanizeNotes(input([reelTrack()], { attack: -30 }))).toEqual([0, 0.25, 0.5, 0.75, 1]);
 	});
 });
 
@@ -319,26 +347,26 @@ describe('attack', () => {
 
 describe('settings', () => {
 	it('normalizes stored settings', () => {
-		expect(normalizeHumanize(undefined)).toEqual(HUMANIZE_DEFAULTS);
-		expect(
-			normalizeHumanize({ style: 'bluegrass', lilt: 400, accent: 'x', attack: -12.4 })
-		).toEqual({ style: 'irish', lilt: 100, accent: HUMANIZE_DEFAULTS.accent, attack: -12 });
-		expect(normalizeHumanize({ style: 'oldtime', lilt: 0, accent: 0, attack: 0 })).toEqual({
-			style: 'oldtime',
-			lilt: 0,
+		expect(normalizeHumanize(undefined)).toEqual(HUMANIZE_OFF);
+		expect(normalizeHumanize({ style: 'oldtime', lilt: 400, accent: 'x', attack: -12.4 })).toEqual({
+			lilt: 2,
 			accent: 0,
+			attack: -12
+		});
+		expect(normalizeHumanize({ lilt: 1.5, accent: -20, attack: 0 })).toEqual({
+			lilt: 1.5,
+			accent: -20,
 			attack: 0
 		});
-		expect(isHumanizeOff({ ...HUMANIZE_OFF, style: 'oldtime' })).toBe(true);
-		expect(isHumanizeOff(HUMANIZE_DEFAULTS)).toBe(false);
+		expect(isHumanizeOff(HUMANIZE_OFF)).toBe(true);
+		expect(isHumanizeOff({ lilt: 1.1, accent: 0, attack: 0 })).toBe(false);
+		expect(isHumanizeOff({ lilt: 1, accent: -5, attack: 0 })).toBe(false);
 	});
 
 	it('keys renderings only when it changes something', () => {
 		expect(humanizeKey(HUMANIZE_OFF)).toBeUndefined();
-		expect(humanizeKey({ ...HUMANIZE_OFF, style: 'oldtime' })).toBeUndefined();
-		expect(humanizeKey(HUMANIZE_DEFAULTS)).toBe('h20,20,15');
-		expect(humanizeKey({ ...HUMANIZE_DEFAULTS, style: 'oldtime' })).toBe('h20,20,15o');
-		// The style changes nothing with the lilt alone.
-		expect(humanizeKey({ style: 'oldtime', lilt: -30, accent: 0, attack: 0 })).toBe('h-30,0,0');
+		expect(humanizeKey({ lilt: 1.5, accent: -20, attack: 0 })).toBe('hr1.5,-20,0');
+		expect(humanizeKey({ lilt: 1, accent: 30, attack: 10 })).toBe('hr1,30,10');
+		expect(humanizeKey({ lilt: 1 / 1.5, accent: 0, attack: 0 })).toBe('hr0.667,0,0');
 	});
 });

@@ -3,7 +3,7 @@
 // render (header, tempo, times through), the instruments and their sample ranges, and the audio
 // cache key of a rendering. The browser half (abcjs, Web Audio) is in audio/synth.ts.
 
-import { HUMANIZE_DEFAULTS, humanizeKey, normalizeHumanize, type Humanize } from './humanize.ts';
+import { HUMANIZE_OFF, humanizeKey, type Humanize } from './humanize.ts';
 import { parseKey } from './key.ts';
 import type { Piece, Source } from './types.ts';
 
@@ -53,14 +53,17 @@ export function foldPitch(pitch: number, [lo, hi]: readonly [number, number]): n
 	return p < lo ? lo : p;
 }
 
-/** Device-local preferences for synthesized playback. */
+/**
+ * Everything about how a tune is synthesized, as resolved for one piece: its tag playback profile
+ * (domain/playback.ts), with the recording's instrument override if it has one.
+ */
 export interface SynthOptions {
 	instrument: InstrumentId;
 	/** Times through the whole tune, its own repeats included. */
 	timesThrough: number;
 	/** Play the setting's chord symbols (if it has any) on piano with a bass. */
 	chords: boolean;
-	/** Lilt, accent and attack on the strong quavers, and the style (see humanize.ts). */
+	/** Lilt, accent and attack on the strong quavers (see humanize.ts). */
 	humanize: Humanize;
 }
 
@@ -68,25 +71,13 @@ export const DEFAULT_SYNTH_OPTIONS: SynthOptions = {
 	instrument: 'fiddle',
 	timesThrough: 2,
 	chords: false,
-	humanize: HUMANIZE_DEFAULTS
+	humanize: HUMANIZE_OFF
 };
 
 export const MAX_TIMES_THROUGH = 4;
 
-/** Fills gaps and drops nonsense in stored options. */
-export function normalizeSynthOptions(value: unknown): SynthOptions {
-	const v = (value && typeof value === 'object' ? value : {}) as Partial<SynthOptions>;
-	const times = Math.round(Number(v.timesThrough));
-	return {
-		instrument:
-			typeof v.instrument === 'string' && v.instrument in INSTRUMENTS
-				? v.instrument
-				: DEFAULT_SYNTH_OPTIONS.instrument,
-		timesThrough:
-			times >= 1 && times <= MAX_TIMES_THROUGH ? times : DEFAULT_SYNTH_OPTIONS.timesThrough,
-		chords: typeof v.chords === 'boolean' ? v.chords : DEFAULT_SYNTH_OPTIONS.chords,
-		humanize: normalizeHumanize(v.humanize)
-	};
+export function isInstrument(value: unknown): value is InstrumentId {
+	return typeof value === 'string' && Object.hasOwn(INSTRUMENTS, value);
 }
 
 /** A tempo as ABC's `Q:` gives it: `bpm` beats of `unit` (a fraction of a whole note) a minute. */

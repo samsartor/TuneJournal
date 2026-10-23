@@ -7,8 +7,16 @@
 // The picker's preview bar pauses, resumes and seeks it; times are tune seconds at 100%, as for the
 // main player (audio/synth-adapter.ts), so a place in the tune holds across speed changes. A map of
 // the tune's bars (ui/follow.ts) lets the playing setting's notation follow along.
+//
+// A preview plays with the playback profile of the piece being edited, the tune's type tag
+// counting as one of its tags (the picker resolves it: `PreviewTarget.options`).
 
-import { buildTuneAbc, secondsPerWhole, type SynthTarget } from '#lib/domain/synth.ts';
+import {
+	buildTuneAbc,
+	secondsPerWhole,
+	type SynthOptions,
+	type SynthTarget
+} from '#lib/domain/synth.ts';
 import { synth } from '#lib/store/synth.svelte.ts';
 import { scoreMap, type ScoreMap } from '#lib/ui/follow.ts';
 import { clampRate, clampTime } from './bounds.ts';
@@ -17,6 +25,11 @@ import { abcjsLibrary } from './synth.ts';
 import { SynthAdapter } from './synth-adapter.ts';
 
 export type PreviewState = 'idle' | 'loading' | 'playing' | 'paused';
+
+/** What a preview plays: a setting, and the options (profile) it plays with. */
+export interface PreviewTarget extends SynthTarget {
+	options: SynthOptions;
+}
 
 class PreviewStore {
 	/** What's loaded: a caller's key such as `setting:12342` or `tune:1`. */
@@ -47,7 +60,7 @@ class PreviewStore {
 	}
 
 	/** Plays `key`, resumes it if it's paused, or stops it if it's playing (or loading). */
-	toggle(key: string, target: () => Promise<SynthTarget>, title = ''): Promise<void> {
+	toggle(key: string, target: () => Promise<PreviewTarget>, title = ''): Promise<void> {
 		const state = this.state(key);
 		if (state === 'paused') return this.resume();
 		if (state !== 'idle') {
@@ -57,7 +70,7 @@ class PreviewStore {
 		return this.play(key, target, title);
 	}
 
-	async play(key: string, target: () => Promise<SynthTarget>, title = ''): Promise<void> {
+	async play(key: string, target: () => Promise<PreviewTarget>, title = ''): Promise<void> {
 		this.stop();
 		const token = ++this.#token;
 		this.key = key;
@@ -69,7 +82,9 @@ class PreviewStore {
 			const t = await target();
 			if (token !== this.#token) return;
 			void this.#mapScore(t, token);
-			const adapter = new SynthAdapter((tempo, transpose) => synth.render(t, tempo, transpose));
+			const adapter = new SynthAdapter((tempo, transpose) =>
+				synth.render(t, t.options, tempo, transpose)
+			);
 			this.#adapter = adapter;
 			this.#off = adapter.onTime((s) => {
 				if (token !== this.#token) return;
@@ -96,11 +111,11 @@ class PreviewStore {
 	}
 
 	/** The tune's bars, mapped from the same ABC the synthesizer renders. */
-	async #mapScore(target: SynthTarget, token: number) {
+	async #mapScore(target: PreviewTarget, token: number) {
 		try {
 			const [setting, abcjs] = await Promise.all([synth.setting(target), abcjsLibrary()]);
 			if (token !== this.#token) return;
-			const tune = buildTuneAbc(setting, synth.options.timesThrough);
+			const tune = buildTuneAbc(setting, target.options.timesThrough);
 			this.score = scoreMap(abcjs, tune.abc, secondsPerWhole(tune.tempo));
 		} catch (e) {
 			// The preview still plays; its notation just stays put.

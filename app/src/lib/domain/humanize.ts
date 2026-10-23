@@ -2,13 +2,14 @@
 // aren't played evenly as written. Notes on the strong quavers are a little longer (lilt), louder
 // (accent) and sharper (attack) than the ones between. This module works on abcjs' flat note events
 // (start and duration in whole notes, volume as MIDI velocity) and on the rendered samples; the
-// browser half (audio/synth.ts) applies it.
+// browser half (audio/synth.ts) applies it. Which settings apply to a tune comes from its tag
+// playback profile (domain/playback.ts).
 //
 // The grid is the quaver. Quavers are grouped in twos in simple meters (reels, hornpipes, polkas:
 // 2/2, 4/4, 2/4, 3/4, 3/2) and in threes in compound ones (jigs, slip jigs, slides: 6/8, 9/8,
 // 12/8). Counting from 1 in each bar, the strong positions are 1 mod 2 or 1 mod 3 (1, 3, 5, 7 in a
-// reel; 1, 4 in a jig). In the old-time style the accent goes on the last quaver of each group
-// instead (0 mod 2 in a reel); the lilt is the same.
+// reel; 1, 4 in a jig). Accent and attack always go on those; a negative amount de-emphasises them,
+// which makes the quavers between relatively stronger (an old-time feel).
 
 /** A meter as abcjs gives it (`getMeterFraction`). */
 export interface Meter {
@@ -16,34 +17,50 @@ export interface Meter {
 	den?: number;
 }
 
-export type HumanizeStyle = 'irish' | 'oldtime';
-
-export const HUMANIZE_STYLES: Record<HumanizeStyle, string> = {
-	irish: 'Irish',
-	oldtime: 'Old-time'
-};
-
-/**
- * The humanization settings, each from −100 to 100 (0 = played as written). Negative values do
- * the reverse: the off-beats long, loud or sharp.
- */
+/** The humanization settings. As written: lilt 1, accent 0, attack 0. */
 export interface Humanize {
-	style: HumanizeStyle;
-	/** The strong quaver longer, the others in its group shorter: 100 = 2:1 in a reel. */
+	/**
+	 * The lilt as a long:short ratio: the strong quaver's length over each of the others in its
+	 * group (2 = 2:1 pairs in a reel; in a jig, the first quaver against each of the other two).
+	 * 1 is even; below 1 the strong quaver is the short one. From MIN_LILT to MAX_LILT.
+	 */
 	lilt: number;
-	/** The strong quavers louder, the others softer: 100 = 1.5× and 0.5× the velocity. */
+	/** −100 to 100. The strong quavers louder, the others softer: 100 = 1.5× and 0.5× the velocity. */
 	accent: number;
-	/** The strong notes' attack sharpened: 100 = 3× the level at the onset, easing to 1×. */
+	/** −100 to 100. The strong notes' attack sharpened: 100 = 3× the level at the onset, easing to 1×. */
 	attack: number;
 }
 
-export const HUMANIZE_OFF: Humanize = { style: 'irish', lilt: 0, accent: 0, attack: 0 };
+export const HUMANIZE_OFF: Humanize = { lilt: 1, accent: 0, attack: 0 };
 
-/** Gentle: a lilt of about 1.14:1 in a reel, accents about ±10%, a slightly sharper attack. */
-export const HUMANIZE_DEFAULTS: Humanize = { style: 'irish', lilt: 20, accent: 20, attack: 15 };
+export const MIN_LILT = 0.5;
+export const MAX_LILT = 2;
 
-/** Lilt at 100: the strong quaver gains a third of a quaver (2:1 in pairs, triplet swing). */
-const MAX_LILT = 1 / 3;
+/**
+ * The lilt slider's notches, roughly evenly spaced on a log scale and symmetric about Even (each
+ * ratio below 1 is the reciprocal of one above), so the slider has its middle at 1.
+ */
+const LILT_UP = [1.05, 1.1, 1.15, 1.2, 1.25, 1.33, 1.4, 1.5, 1.6, 1.75, 2];
+export const LILT_NOTCHES: readonly number[] = [
+	...LILT_UP.map((r) => roundLilt(1 / r)).reverse(),
+	1,
+	...LILT_UP
+];
+
+function roundLilt(r: number): number {
+	return Math.round(r * 1000) / 1000;
+}
+
+/** The notch nearest a ratio (on the log scale): the slider's position for a stored value. */
+export function liltNotch(ratio: number): number {
+	let best = 0;
+	for (let i = 1; i < LILT_NOTCHES.length; i++) {
+		const d = Math.abs(Math.log(LILT_NOTCHES[i] / ratio));
+		if (d < Math.abs(Math.log(LILT_NOTCHES[best] / ratio))) best = i;
+	}
+	return best;
+}
+
 /** Accent at 100: strong notes ×1.5 velocity. */
 const MAX_ACCENT = 0.5;
 /** Attack at 100: ×3 at the onset; at −100, a fade in from silence. */
@@ -54,43 +71,49 @@ export const ATTACK_SECONDS = 0.05;
 /** Times closer than this (in whole notes) are the same: abcjs rounds starts to 1e-6. */
 const EPS = 1e-4;
 
-const clampSetting = (v: unknown, fallback: number) => {
+const clampAmount = (v: unknown, fallback: number) => {
 	const n = Math.round(Number(v));
 	return Number.isFinite(n) ? Math.max(-100, Math.min(100, n)) : fallback;
 };
 
+/** A stored lilt ratio, clamped to MIN_LILT–MAX_LILT and rounded to 0.001. */
+export function clampLilt(v: unknown, fallback = 1): number {
+	const n = Number(v);
+	if (!Number.isFinite(n) || n <= 0) return fallback;
+	return roundLilt(Math.max(MIN_LILT, Math.min(MAX_LILT, n)));
+}
+
 /** Fills gaps and drops nonsense in stored settings. */
-export function normalizeHumanize(value: unknown, defaults = HUMANIZE_DEFAULTS): Humanize {
+export function normalizeHumanize(value: unknown, defaults = HUMANIZE_OFF): Humanize {
 	const v = (value && typeof value === 'object' ? value : {}) as Partial<Humanize>;
 	return {
-		style: v.style === 'irish' || v.style === 'oldtime' ? v.style : defaults.style,
-		lilt: v.lilt === undefined ? defaults.lilt : clampSetting(v.lilt, defaults.lilt),
-		accent: v.accent === undefined ? defaults.accent : clampSetting(v.accent, defaults.accent),
-		attack: v.attack === undefined ? defaults.attack : clampSetting(v.attack, defaults.attack)
+		lilt: v.lilt === undefined ? defaults.lilt : clampLilt(v.lilt, defaults.lilt),
+		accent: v.accent === undefined ? defaults.accent : clampAmount(v.accent, defaults.accent),
+		attack: v.attack === undefined ? defaults.attack : clampAmount(v.attack, defaults.attack)
 	};
 }
 
 /** Whether these settings change nothing (the rendering is exactly the plain one). */
 export function isHumanizeOff(h: Humanize): boolean {
-	return h.lilt === 0 && h.accent === 0 && h.attack === 0;
+	return h.lilt === 1 && h.accent === 0 && h.attack === 0;
 }
 
 /**
  * The audio cache key part for these settings: none when off, so plain renderings keep the keys
- * they had before humanization existed. The style only matters for accent and attack.
+ * they had before humanization existed. `hr` (the lilt as a ratio) sets these apart from the
+ * keys of the first version (`h20,20,15`, a −100–100 lilt and no grace-note handling).
  */
 export function humanizeKey(h: Humanize): string | undefined {
 	if (isHumanizeOff(h)) return undefined;
-	const style = h.style === 'oldtime' && (h.accent || h.attack) ? 'o' : '';
-	return `h${h.lilt},${h.accent},${h.attack}${style}`;
+	return `hr${roundLilt(h.lilt)},${h.accent},${h.attack}`;
 }
 
-/** The lilt as a long:short ratio of a reel's quaver pair, e.g. "1.14:1" (or "1:1.14"). */
-export function liltRatio(lilt: number): string {
-	const a = (lilt / 100) * MAX_LILT;
-	const ratio = (1 + Math.abs(a)) / (1 - Math.abs(a));
-	const r = ratio.toFixed(2);
-	return a >= 0 ? `${r}:1` : `1:${r}`;
+const trimNumber = (n: number) => String(Number(n.toFixed(2)));
+
+/** The lilt for people: "Even", "1.5:1", or "1:1.5" below 1. */
+export function formatLilt(ratio: number): string {
+	if (Math.abs(ratio - 1) < 1e-6) return 'Even';
+	return ratio > 1 ? `${trimNumber(ratio)}:1` : `1:${trimNumber(1 / ratio)}`;
 }
 
 /** The beat grid of a meter, in whole notes, or undefined for meters we don't humanize. */
@@ -185,42 +208,45 @@ function groupAt(groups: readonly Group[], t: number): Group | undefined {
 
 /**
  * The lilt as a time warp: within each group, the first quaver `[origin, origin + unit)` is
- * stretched by `lilt` and the rest of the group squeezed to fit, piecewise linearly, so group
- * boundaries (and so bar lines) stay put and the order of everything is kept. Any time maps,
- * so triplets, grace notes and notes across groups scale consistently. A group missing its first
- * quaver (a pickup's) or with nothing after it is left as it is.
+ * stretched or squeezed so it is `ratio` times as long as each of the others, and the rest of the
+ * group fits around it, piecewise linearly, so group boundaries (and so bar lines) stay put and the
+ * order of everything is kept. Any time maps, so triplets, grace notes and notes across groups
+ * scale consistently. A short group (a shortened bar's) uses the same ratio against what's left of
+ * it. A group missing its first quaver (a pickup's) or with nothing after it is left as it is.
+ *
+ * With `n` quavers' worth after the first (1 in a reel's pair, 2 in a jig's three), the first
+ * becomes `L = ratio × (1 + n) / (ratio + n)` quavers and each of the others `L / ratio`.
  */
 export function liltWarp(
 	groups: readonly Group[],
 	grid: Grid,
-	lilt: number
+	ratio: number
 ): (t: number) => number {
-	const a = (Math.max(-100, Math.min(100, lilt)) / 100) * MAX_LILT;
-	if (a === 0) return (t) => t;
+	const r = clampLilt(ratio);
+	if (r === 1) return (t) => t;
 	return (t) => {
 		const g = groupAt(groups, t);
 		if (!g || g.from > g.origin + EPS) return t;
 		const p = g.origin + grid.unit;
 		const rest = g.to - p;
 		if (rest < EPS) return t;
-		// In a short group, a shift in proportion to what's left of it.
-		const shift = a * grid.unit * Math.min(1, rest / (grid.unit * (grid.group - 1)));
-		if (t <= p) return g.origin + ((t - g.origin) * (grid.unit + shift)) / grid.unit;
-		return p + shift + ((Math.min(t, g.to) - p) * (rest - shift)) / rest;
+		const n = rest / grid.unit;
+		const first = (grid.unit * r * (1 + n)) / (r + n);
+		if (t <= p) return g.origin + ((t - g.origin) * first) / grid.unit;
+		return g.origin + first + ((Math.min(t, g.to) - p) * (rest + grid.unit - first)) / rest;
 	};
 }
 
 /** Where a note starts on the grid: the strong position, another quaver, or off the grid. */
 export type Stress = 'strong' | 'weak' | 'off';
 
-export function stressAt(groups: readonly Group[], grid: Grid, style: HumanizeStyle, t: number) {
+export function stressAt(groups: readonly Group[], grid: Grid, t: number) {
 	const g = groupAt(groups, t);
 	if (!g) return 'off' as Stress;
 	const position = (t - g.origin) / grid.unit;
 	const index = Math.round(position);
 	if (!near(position, index)) return 'off' as Stress;
-	const strong = style === 'oldtime' ? grid.group - 1 : 0;
-	return (index === strong ? 'strong' : 'weak') as Stress;
+	return (index === 0 ? 'strong' : 'weak') as Stress;
 }
 
 /** The part of an abcjs note event humanization reads and changes. */
@@ -248,6 +274,13 @@ export interface HumanizeInput {
  * Applies lilt and accent to abcjs' note events in place, and returns the strong notes' onsets
  * (after the lilt, in whole notes, sorted, without duplicates) for the attack. Changes nothing
  * when the settings are off or the meter isn't one we know.
+ *
+ * Grace notes: abcjs plays them *in* their main note's time. `{g}A2` becomes a grace at A's
+ * written start, taking half of A's length, and A itself starts halfway through (style 'grace' on
+ * the graces, written just before the main note in the same track). So the stress of a note right
+ * after a run of graces comes from where the run starts, its written position: the main note gets
+ * the strong (or weak) accent and the attack onset, and the graces keep abcjs' own velocity.
+ * Everything still goes through the lilt warp at its actual time.
  */
 export function humanizeNotes(input: HumanizeInput): number[] {
 	const { settings } = input;
@@ -255,17 +288,30 @@ export function humanizeNotes(input: HumanizeInput): number[] {
 	if (!grid || isHumanizeOff(settings)) return [];
 	const groups = beatGroups(input.barStarts, input.total, grid, input.copies);
 	const warp = liltWarp(groups, grid, settings.lilt);
+	const lilted = clampLilt(settings.lilt) !== 1;
 	const k = (Math.max(-100, Math.min(100, settings.accent)) / 100) * MAX_ACCENT;
 	const strongGain = 1 + k;
 	const weakGain = 1 - k / (grid.group - 1);
 	const onsets = new Set<number>();
 	for (const track of input.tracks) {
+		/** The graces just played: where the first started and where the last ends. */
+		let graces: { from: number; end: number } | undefined;
 		for (const event of track) {
 			if (event.cmd !== 'note' || event.start === undefined) continue;
 			const start = event.start;
-			const stress =
-				event.style === 'grace' ? 'off' : stressAt(groups, grid, settings.style, start);
-			if (settings.lilt) {
+			let stress: Stress;
+			if (event.style === 'grace') {
+				const end = start + (event.duration ?? 0);
+				if (graces && near(start, graces.end)) graces.end = end;
+				else graces = { from: start, end };
+				stress = 'off';
+			} else {
+				// The main note of the graces (each note of it, for a chord) starts where they end.
+				const graced = graces && near(start, graces.end);
+				if (!graced) graces = undefined;
+				stress = stressAt(groups, grid, graced ? graces!.from : start);
+			}
+			if (lilted) {
 				const end = start + (event.duration ?? 0);
 				const s = warp(start);
 				event.start = Math.round(s * 1e6) / 1e6;
