@@ -357,3 +357,32 @@ test('practising mid-session keeps the order; an index past the end is the end s
 	).toBeVisible();
 	await expect(page.getByText('3 pieces this round.')).toBeVisible();
 });
+
+test('after Practiced, details and Back (twice) return to the card you left', async ({
+	page
+}, info) => {
+	for (const title of ['The Kesh', 'Cooley’s', 'The Butterfly', 'Out on the Ocean']) {
+		await addTune(page, info, { title });
+	}
+	await openShuffle(page);
+	await page.getByRole('button', { name: 'Practiced' }).click();
+	await expect(position(page)).toHaveText('2 of 4');
+	await page.getByRole('button', { name: 'Practiced' }).click();
+	await expect(position(page)).toHaveText('3 of 4');
+	await expect(page).toHaveURL(/&i=2$/);
+	const third = (await cardTitle(page).textContent())!.trim();
+
+	for (let round = 0; round < 2; round++) {
+		await shuffleCard(page).getByRole('link', { name: 'Open details' }).click();
+		await expect(page.getByRole('heading', { level: 1, name: third })).toBeVisible();
+		await page.goBack();
+		await expect(position(page)).toHaveText('3 of 4');
+		await expect(cardTitle(page)).toHaveText(third);
+		await expect(page).toHaveURL(/&i=2$/);
+	}
+	// And the in-app link, after Back.
+	await shuffleCard(page).getByRole('link', { name: 'Open details' }).click();
+	await page.getByRole('link', { name: '← Shuffle' }).click();
+	await expect(position(page)).toHaveText('3 of 4');
+	await expect(cardTitle(page)).toHaveText(third);
+});

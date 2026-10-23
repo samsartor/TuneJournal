@@ -1598,8 +1598,10 @@ Post-M6 notes:
   anything.
 - **Route:** `/shuffle?seed=<8 base-36 chars>&at=<epoch ms>&i=<0-based index>`. Missing or
   malformed seed/at on entry starts a fresh session and writes it in; a missing or bad `i` is 0.
-  Next/Skip/Practiced and Reshuffle update the URL with a shallow, replacing `goto`, so Back from
-  Shuffle leaves it. An `i` past the end shows the "been through everything" state.
+  Next/Skip/Practiced and Reshuffle update the URL with a replacing (not shallow) `goto`, so Back
+  from Shuffle leaves it. Not shallow because Kit rewrites the history entry you navigate away
+  from with the URL of its last real navigation, so a shallow update was lost on the way to a
+  piece's details (Back landed on the first card). An `i` past the end shows the "been through everything" state.
 - **Kept order:** skill and favorite edits made during a session (the card's own skill slider,
   say) would change a rebuilt order, so the order as first built is kept for the tab, in memory
   and in `sessionStorage` (`tunejournal.shuffle`, keyed by seed, start and a settings

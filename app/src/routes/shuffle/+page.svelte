@@ -54,12 +54,14 @@
 
 	const href = $derived(`${resolve('/shuffle')}?${sessionQuery(session)}`);
 
-	// Keep the URL in step without adding history entries, so Back leaves Shuffle.
+	// Keep the URL in step without adding history entries, so Back leaves Shuffle. A real (same
+	// route, replacing) navigation, not a shallow one: Kit rewrites the entry you leave with the
+	// URL of its last real navigation, so a shallow update would be lost on the way to details.
 	$effect(() => {
 		const target = href;
 		if (location.pathname + location.search === target) return;
 		// eslint-disable-next-line svelte/no-navigation-without-resolve -- resolve('/shuffle') plus a query
-		void goto(target, { replace: true, shallow: true, reset: false });
+		void goto(target, { replace: true, reset: false });
 	});
 
 	// Build the order once the library is open; settings changed mid-session start a new shuffle.
