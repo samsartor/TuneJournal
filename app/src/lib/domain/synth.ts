@@ -7,7 +7,7 @@ import { parseKey } from './key.ts';
 import type { Piece, Source } from './types.ts';
 
 /** Bump when renderings change (instrument mapping, mixing), so stale cached audio is ignored. */
-export const SYNTH_VERSION = 1;
+export const SYNTH_VERSION = 2;
 
 export type InstrumentId = 'fiddle' | 'flute' | 'whistle' | 'accordion' | 'piano';
 

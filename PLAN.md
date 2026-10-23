@@ -1291,7 +1291,11 @@ Post-M6 notes:
 - **abcjs 6.7**, loaded with `import()` on first use (a separate ~500 KB chunk, precached like
   every immutable chunk). We parse with `parseOnly`, build the sequence with `setUpAudio` (melody
   program, `chordsOff`, `midiTranspose`), fit it to our samples, and render with `CreateSynth`
-  (`init({ sequence, millisecondsPerMeasure })` + `prime`). abcjs is given a stand-in AudioContext
+  (`init({ sequence, millisecondsPerMeasure })` + `prime`). Each note fades out over its last
+  20 ms (`fadeLength: 20, noteEnd: 20`) so it's silent by its written end, as abcjs 5 (which
+  thesession.org uses) cut notes; abcjs 6's default 200 ms fade *after* the end, plus
+  `programOffsets` starting notes early, left 2–3 sustained fiddle/accordion notes sounding at
+  once at reel tempo (fixed 2026-10-23, cache version v2). abcjs is given a stand-in AudioContext
   that decodes through an `OfflineAudioContext` at 32 kHz and makes plain `AudioBuffer`s, so no
   real AudioContext is needed: no autoplay-policy wait (Shuffle renders a card before any tap) and
   the sample rate is ours. The buffer is mixed to mono, normalized to a 0.89 peak and encoded as
@@ -1316,7 +1320,7 @@ Post-M6 notes:
   trims are the same as for audio, and a clip's trim is stored in tune seconds at 100%. The trim
   editor draws the 100% rendering. The player re-renders in place when the options change or the
   piece's setting changes.
-- **Audio cache keys:** `synth:v1:s{settingId}:{FNV hash of the full ABC}:{instrument}:{chords|
+- **Audio cache keys:** `synth:v{SYNTH_VERSION}:s{settingId}:{FNV hash of the full ABC}:{instrument}:{chords|
   melody}[:t{semitones}]@{tempo}`, so an edited setting, other times through or options never reuse
   a stale rendering. After each render we keep the 3 newest renderings of that tune and options
   and 24 synth renderings in all (they're regenerable); "Remove downloaded recordings" drops them

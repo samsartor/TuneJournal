@@ -16,17 +16,14 @@ import { encodeWav } from './wav.ts';
 export const SAMPLE_RATE = 32000;
 
 /**
- * How long each instrument's samples take to sound (the MP3 encoder's ~25 ms of lead-in plus the
- * attack, measured to half the peak level). abcjs starts each note this much early so it lands
- * on the beat; without it the fiddle drags behind by a tenth of a second.
+ * Each note fades out over its last 20 ms, so it's silent by its written end. abcjs 6 holds a note
+ * to its end and only then fades it, over 200 ms by default: at reel tempo (150 ms quavers) that
+ * left two or three sustained fiddle or accordion notes sounding at once. abcjs 5, which
+ * thesession.org plays with, cut notes off at their end; a short fade does the same without a click.
+ * No `programOffsets` either: they start a note early *and* lengthen it by as much, so its attack
+ * overlapped the end of the note before.
  */
-const SAMPLE_ONSET_MS: Record<string, number> = {
-	violin: 90,
-	flute: 30,
-	whistle: 30,
-	accordion: 30,
-	acoustic_grand_piano: 15
-};
+const RELEASE_MS = 20;
 
 /** The loudest sample of a rendering, so every tune and instrument plays at the same level. */
 const PEAK = 0.89;
@@ -153,8 +150,9 @@ export async function renderTune(request: RenderRequest, soundFontUrl: string): 
 			options: {
 				soundFontUrl,
 				soundFontVolumeMultiplier: 1,
-				programOffsets: SAMPLE_ONSET_MS,
-				fadeLength: 200
+				fadeLength: RELEASE_MS,
+				// Shortens each note by this much (abcjs reads it, its types don't list it).
+				...{ noteEnd: RELEASE_MS }
 			}
 		});
 		await synth.prime();

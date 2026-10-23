@@ -27,7 +27,7 @@ async function shot(page: Page, info: TestInfo, name: string) {
 /**
  * Cooley's, setting 1 (E dorian): two 8-bar parts, each repeated, a crotchet pickup and a
  * shortened last bar, so 32 whole notes per time through. At the reel default (minim = 100,
- * 1.2 s a whole note) and 2× through that's 76.8 s, plus the last note's 0.2 s fade.
+ * 1.2 s a whole note) and 2× through that's 76.8 s, plus the last note's 20 ms release.
  */
 const COOLEYS_SECONDS = 76.8;
 
@@ -41,8 +41,8 @@ async function addCooleysSetting(page: Page, info: TestInfo) {
 }
 
 /**
- * The 100% rendering in the audio cache, decoded: its peak level, and the longest stretch with
- * nothing audible (a missing sample would leave a gap).
+ * The 100% rendering in the audio cache, decoded: its peak level, the longest stretch with
+ * nothing audible (a missing sample would leave a gap), and how far the level dips between notes.
  */
 async function renderedAudio(page: Page) {
 	return page.evaluate(async () => {
@@ -69,7 +69,32 @@ async function renderedAudio(page: Page) {
 			quiet = v < 0.01 ? quiet + 1 : 0;
 			if (quiet > longestQuiet) longestQuiet = quiet;
 		}
-		return { peak, silentSeconds: longestQuiet / buffer.sampleRate, duration: buffer.duration };
+		// Notes are separate: at each quaver line (0.15 s at 1.2 s a whole note) the level, in 5 ms
+		// windows, drops well below that quaver's loudest. Notes that ring on past their end (a long
+		// release, or an early start) leave the level flat across the line. Median over the tune,
+		// since a crotchet has no break in the middle.
+		const rate = buffer.sampleRate;
+		const rms = (from: number) => {
+			const n = Math.round(rate * 0.005);
+			const at = Math.round(from * rate);
+			let sum = 0;
+			for (let i = at; i < at + n; i++) sum += data[i] * data[i];
+			return Math.sqrt(sum / n);
+		};
+		const dips: number[] = [];
+		for (let line = 1.2; line < buffer.duration - 1; line += 0.15) {
+			let loudest = 0;
+			for (let t = line - 0.15; t < line - 0.02; t += 0.005) loudest = Math.max(loudest, rms(t));
+			dips.push(Math.min(rms(line - 0.01), rms(line - 0.005), rms(line)) / loudest);
+		}
+		dips.sort((a, b) => a - b);
+		const dipBetweenNotes = dips[dips.length >> 1];
+		return {
+			peak,
+			silentSeconds: longestQuiet / rate,
+			duration: buffer.duration,
+			dipBetweenNotes
+		};
 	});
 }
 
@@ -103,6 +128,8 @@ test('a thesession setting plays synthesized, with speed, loop and trim', async 
 	const audio = await renderedAudio(page);
 	expect(audio.peak).toBeGreaterThan(0.5);
 	expect(audio.silentSeconds).toBeLessThan(2);
+	// …and its notes end when they're written to, rather than blurring into the next ones.
+	expect(audio.dipBetweenNotes).toBeLessThan(0.1);
 
 	// Speed: re-rendered at the new tempo, in the same place in the tune, same length in tune time.
 	await bar.getByRole('slider', { name: 'Position' }).fill('20');
@@ -137,7 +164,7 @@ test('a thesession setting plays synthesized, with speed, loop and trim', async 
 	const dialog = page.getByRole('dialog', { name: /Trim/ });
 	await expect(dialog.getByText('Drawing the waveform…')).toBeHidden({ timeout: 15_000 });
 	await expect(dialog.locator('canvas')).toBeVisible();
-	await expect(dialog.getByText('of 1:17')).toBeVisible();
+	await expect(dialog.getByText('of 1:16')).toBeVisible();
 	await dialog.getByRole('button', { name: 'Play', exact: true }).click();
 	await expect(bar).toHaveAttribute('data-playing', 'true');
 	await dialog.getByRole('button', { name: 'Pause' }).click();
